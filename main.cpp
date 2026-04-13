@@ -1,11 +1,7 @@
-/*
- * ============================================================================
- *  main.cpp — Macman Entry Point
- * ============================================================================
- *  Minimal entry point that initializes the system, parses arguments,
- *  routes to the correct operation handler, and exits cleanly.
- * ============================================================================
- */
+// main.cpp — Macman Entry Point
+// Minimal entry point that initializes the system, parses arguments,
+// routes to the correct operation handler, and exits cleanly.
+
 
 #include "macman.hpp"
 #include "cli/argument_parser.hpp"
@@ -24,7 +20,7 @@
 
 using namespace macman;
 
-// ─── Signal Handler (Ctrl+C Cleanup) ────────────────────────────────────────
+// --- Signal Handler (Ctrl+C Cleanup) ---
 
 static void signal_handler(int signum) {
     std::cout << std::endl;
@@ -33,7 +29,7 @@ static void signal_handler(int signum) {
     std::exit(128 + signum);
 }
 
-// ─── Display Package Info (for -Si / -Qi) ───────────────────────────────────
+// --- Display Package Info (for -Si / -Qi) ---
 
 static void display_package_info(const Package& pkg, bool installed = false) {
     auto field = [](const std::string& label, const std::string& value) {
@@ -81,7 +77,7 @@ static void display_package_info(const Package& pkg, bool installed = false) {
     std::cout << std::endl;
 }
 
-// ─── Main Function ──────────────────────────────────────────────────────────
+// --- Main Function ---
 
 int main(int argc, char* argv[]) {
     // Register signal handler
@@ -105,21 +101,21 @@ int main(int argc, char* argv[]) {
 
     int exit_code = 0;
 
-    // ─── Route to Operation Handler ─────────────────────────────────────
+    // --- Route to Operation Handler ---
 
     switch (args.operation) {
 
-    // ── Version ─────────────────────────────────────────────────────────
+    // --- Version ---
     case Operation::VERSION:
         ArgumentParser::print_version();
         break;
 
-    // ── Help ────────────────────────────────────────────────────────────
+    // --- Help ---
     case Operation::HELP:
         ArgumentParser::print_help();
         break;
 
-    // ── Sync Install (-S <pkg>) ─────────────────────────────────────────
+    // --- Sync Install (-S <pkg>) ---
     case Operation::SYNC_INSTALL: {
         if (geteuid() != 0) {
             colors::print_error("you cannot perform this operation unless you are root.");
@@ -139,7 +135,7 @@ int main(int argc, char* argv[]) {
         break;
     }
 
-    // ── Sync Search (-Ss <query>) ───────────────────────────────────────
+    // --- Sync Search (-Ss <query>) ---
     case Operation::SYNC_SEARCH: {
         if (args.targets.empty()) {
             colors::print_error("no search term specified");
@@ -189,7 +185,7 @@ int main(int argc, char* argv[]) {
         break;
     }
 
-    // ── Sync Info (-Si <pkg>) ───────────────────────────────────────────
+    // --- Sync Info (-Si <pkg>) ---
     case Operation::SYNC_INFO: {
         if (args.targets.empty()) {
             colors::print_error("no targets specified");
@@ -214,7 +210,7 @@ int main(int argc, char* argv[]) {
         break;
     }
 
-    // ── Sync Refresh (-Sy) ──────────────────────────────────────────────
+    // --- Sync Refresh (-Sy) ---
     case Operation::SYNC_REFRESH: {
         Transaction tx(db);
         if (!tx.refresh_databases()) {
@@ -223,7 +219,7 @@ int main(int argc, char* argv[]) {
         break;
     }
 
-    // ── System Upgrade (-Syu) ───────────────────────────────────────────
+    // --- System Upgrade (-Syu) ---
     case Operation::SYNC_UPGRADE: {
         Transaction tx(db);
         tx.set_no_confirm(args.no_confirm);
@@ -233,7 +229,7 @@ int main(int argc, char* argv[]) {
         break;
     }
 
-    // ── Remove (-R <pkg>) ───────────────────────────────────────────────
+    // --- Remove (-R <pkg>) ---
     case Operation::REMOVE: {
         if (geteuid() != 0) {
             colors::print_error("you cannot perform this operation unless you are root.");
@@ -253,7 +249,7 @@ int main(int argc, char* argv[]) {
         break;
     }
 
-    // ── Remove Recursive (-Rs <pkg>) ────────────────────────────────────
+    // --- Remove Recursive (-Rs <pkg>) ---
     case Operation::REMOVE_RECURSIVE: {
         if (geteuid() != 0) {
             colors::print_error("you cannot perform this operation unless you are root.");
@@ -273,7 +269,7 @@ int main(int argc, char* argv[]) {
         break;
     }
 
-    // ── Nuke All (--nuke) ───────────────────────────────────────────────
+    // --- Nuke All (--nuke) ---
     case Operation::NUKE_ALL: {
         if (geteuid() != 0) {
             colors::print_error("you cannot perform this operation unless you are root. Nuke requires sudo.");
@@ -300,7 +296,7 @@ int main(int argc, char* argv[]) {
         break;
     }
 
-    // ── Query List (-Q) ─────────────────────────────────────────────────
+    // --- Query List (-Q) ---
     case Operation::QUERY_LIST: {
         auto packages = db.get_all_packages();
         if (packages.empty()) {
@@ -317,7 +313,7 @@ int main(int argc, char* argv[]) {
         break;
     }
 
-    // ── Query Info (-Qi <pkg>) ──────────────────────────────────────────
+    // --- Query Info (-Qi <pkg>) ---
     case Operation::QUERY_INFO: {
         if (args.targets.empty()) {
             colors::print_error("no targets specified");
@@ -336,7 +332,7 @@ int main(int argc, char* argv[]) {
         break;
     }
 
-    // ── Query Files (-Ql <pkg>) ─────────────────────────────────────────
+    // --- Query Files (-Ql <pkg>) ---
     case Operation::QUERY_FILES: {
         if (args.targets.empty()) {
             colors::print_error("no targets specified");
@@ -357,7 +353,7 @@ int main(int argc, char* argv[]) {
         break;
     }
 
-    // ── Query Owner (-Qo <file>) ────────────────────────────────────────
+    // --- Query Owner (-Qo <file>) ---
     case Operation::QUERY_OWNS: {
         if (args.targets.empty()) {
             colors::print_error("no file specified");
@@ -377,7 +373,7 @@ int main(int argc, char* argv[]) {
         break;
     }
 
-    // ── No Operation ────────────────────────────────────────────────────
+    // --- No Operation ---
     case Operation::NONE:
         ArgumentParser::print_usage();
         exit_code = 1;

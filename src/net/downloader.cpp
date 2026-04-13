@@ -1,11 +1,7 @@
-/*
- * ============================================================================
- *  downloader.cpp — Multi-File Download Manager Implementation
- * ============================================================================
- *  Coordinates downloads with caching, progress bar integration, and
- *  sequential/parallel execution modes.
- * ============================================================================
- */
+// downloader.cpp — Multi-File Download Manager Implementation
+// Coordinates downloads with caching, progress bar integration, and
+// sequential/parallel execution modes.
+
 
 #include "net/downloader.hpp"
 #include "macman.hpp"
@@ -19,7 +15,7 @@ namespace fs = std::filesystem;
 
 namespace macman {
 
-// ─── Constructor ────────────────────────────────────────────────────────────
+// --- Constructor ---
 
 Downloader::Downloader(size_t max_parallel)
     : max_parallel_(max_parallel),
@@ -32,7 +28,7 @@ Downloader::Downloader(size_t max_parallel)
     } catch (...) {}
 }
 
-// ─── Single File Download ───────────────────────────────────────────────────
+// --- Single File Download ---
 
 DownloadResult Downloader::download(const DownloadTask& task) {
     DownloadResult result;
@@ -88,7 +84,7 @@ DownloadResult Downloader::download(const DownloadTask& task) {
     return result;
 }
 
-// ─── Batch Download ─────────────────────────────────────────────────────────
+// --- Batch Download ---
 
 std::vector<DownloadResult> Downloader::download_all(const std::vector<DownloadTask>& tasks) {
     std::vector<DownloadResult> results;
@@ -103,7 +99,7 @@ std::vector<DownloadResult> Downloader::download_all(const std::vector<DownloadT
     return results;
 }
 
-// ─── Cache Checks ───────────────────────────────────────────────────────────
+// --- Cache Checks ---
 
 bool Downloader::is_cached(const std::string& filename) const {
     return fs::exists(get_cache_path(filename));
@@ -113,7 +109,7 @@ std::string Downloader::get_cache_path(const std::string& filename) const {
     return (fs::path(cache_dir_) / filename).string();
 }
 
-// ─── Clear Cache ────────────────────────────────────────────────────────────
+// --- Clear Cache ---
 
 void Downloader::clear_cache() {
     try {
@@ -125,7 +121,7 @@ void Downloader::clear_cache() {
     }
 }
 
-// ─── Get Cache Size ─────────────────────────────────────────────────────────
+// --- Get Cache Size ---
 
 size_t Downloader::get_cache_size() const {
     size_t total = 0;

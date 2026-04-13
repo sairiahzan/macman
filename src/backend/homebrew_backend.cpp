@@ -1,18 +1,13 @@
-/*
- * ============================================================================
- *  homebrew_backend.cpp — Homebrew Formulae API Backend Implementation
- * ============================================================================
- *  Interfaces with Homebrew's public JSON API to search, fetch info, and
- *  download prebuilt bottles. Primary source for macOS packages.
- *
- *  Performance improvements over v1:
- *    - Pre-computed search index eliminates per-query tolower() overhead
- *    - Hash map name_index_ gives O(1) exact-match for get_info()
- *    - macOS version detection cached (was calling popen every time)
- *    - Lazy bottle URL resolution: only computed when actually downloading
- *    - Search results sorted by relevance (exact > prefix > substring)
- * ============================================================================
- */
+// homebrew_backend.cpp — Homebrew Formulae API Backend Implementation
+// Interfaces with Homebrew's public JSON API to search, fetch info, and
+// download prebuilt bottles. Primary source for macOS packages.
+// Performance improvements over v1:
+// - Pre-computed search index eliminates per-query tolower() overhead
+// - Hash map name_index_ gives O(1) exact-match for get_info()
+// - macOS version detection cached (was calling popen every time)
+// - Lazy bottle URL resolution: only computed when actually downloading
+// - Search results sorted by relevance (exact > prefix > substring)
+
 
 #include "backend/homebrew_backend.hpp"
 #include "macman.hpp"
@@ -30,14 +25,14 @@ namespace fs = std::filesystem;
 
 namespace macman {
 
-// ─── Constructor ────────────────────────────────────────────────────────────
+// --- Constructor ---
 
 HomebrewBackend::HomebrewBackend()
     : cache_path_(get_sync_db_dir() + "/homebrew_formulae.json") {
     load_cache();
 }
 
-// ─── Detect macOS Version Codename (Cached) ─────────────────────────────────
+// --- Detect macOS Version Codename (Cached) ---
 
 std::string HomebrewBackend::detect_macos_version() const {
     // Return cached version if already detected
@@ -86,7 +81,7 @@ std::string HomebrewBackend::detect_macos_version() const {
     return result;
 }
 
-// ─── Build Search Index ─────────────────────────────────────────────────────
+// --- Build Search Index ---
 // Pre-computes lowercase names/descriptions and builds a hash map for O(1)
 // exact-match lookups. Called once after cache load/refresh.
 
@@ -119,7 +114,7 @@ void HomebrewBackend::build_search_index() {
     }
 }
 
-// ─── Load Cached Formula List ───────────────────────────────────────────────
+// --- Load Cached Formula List ---
 
 bool HomebrewBackend::load_cache() {
     if (!fs::exists(cache_path_)) return false;
@@ -134,7 +129,7 @@ bool HomebrewBackend::load_cache() {
     }
 }
 
-// ─── Save Formula Cache ─────────────────────────────────────────────────────
+// --- Save Formula Cache ---
 
 bool HomebrewBackend::save_cache() const {
     try {
@@ -151,7 +146,7 @@ bool HomebrewBackend::save_cache() const {
     }
 }
 
-// ─── Check if Cache is Recent ───────────────────────────────────────────────
+// --- Check if Cache is Recent ---
 
 bool HomebrewBackend::is_cache_fresh() const {
     if (!fs::exists(cache_path_)) return false;
@@ -163,7 +158,7 @@ bool HomebrewBackend::is_cache_fresh() const {
     return age.count() < 24; // Cache valid for 24 hours
 }
 
-// ─── Refresh Formula Database ───────────────────────────────────────────────
+// --- Refresh Formula Database ---
 
 bool HomebrewBackend::refresh_formula_cache() {
     colors::print_action("Synchronizing package databases...");
@@ -188,7 +183,7 @@ bool HomebrewBackend::refresh_formula_cache() {
     }
 }
 
-// ─── Refresh Cask Database ──────────────────────────────────────────────────
+// --- Refresh Cask Database ---
 
 bool HomebrewBackend::refresh_cask_cache() {
     colors::print_substatus("Downloading homebrew cask list...");
@@ -215,7 +210,7 @@ bool HomebrewBackend::refresh_cask_cache() {
     }
 }
 
-// ─── Parse Formula JSON to Package ──────────────────────────────────────────
+// --- Parse Formula JSON to Package ---
 
 Package HomebrewBackend::parse_formula(const nlohmann::json& formula, bool resolve_bottle_url) const {
     Package pkg;
@@ -254,7 +249,7 @@ Package HomebrewBackend::parse_formula(const nlohmann::json& formula, bool resol
     return pkg;
 }
 
-// ─── Get Bottle Download URL ────────────────────────────────────────────────
+// --- Get Bottle Download URL ---
 
 std::string HomebrewBackend::get_bottle_url(const nlohmann::json& formula) const {
     if (!formula.contains("bottle") || !formula["bottle"].is_object()) {
@@ -299,7 +294,7 @@ std::string HomebrewBackend::get_bottle_url(const nlohmann::json& formula) const
     return "";
 }
 
-// ─── Search Packages (Indexed, Relevance-Sorted) ────────────────────────────
+// --- Search Packages (Indexed, Relevance-Sorted) ---
 
 std::vector<Package> HomebrewBackend::search(const std::string& query) const {
     std::vector<Package> exact_matches;
@@ -347,7 +342,7 @@ std::vector<Package> HomebrewBackend::search(const std::string& query) const {
     return results;
 }
 
-// ─── Get Info for a Package (O(1) via Hash Map) ─────────────────────────────
+// --- Get Info for a Package (O(1) via Hash Map) ---
 
 std::optional<Package> HomebrewBackend::get_info(const std::string& name) const {
     // O(1) lookup via hash map instead of linear scan
@@ -358,7 +353,7 @@ std::optional<Package> HomebrewBackend::get_info(const std::string& name) const 
     return std::nullopt;
 }
 
-// ─── Get Info from Remote API ───────────────────────────────────────────────
+// --- Get Info from Remote API ---
 
 std::optional<Package> HomebrewBackend::get_info_remote(const std::string& name) {
     std::string url = std::string(BREW_API_BASE) + "/formula/" + name + ".json";
@@ -376,7 +371,7 @@ std::optional<Package> HomebrewBackend::get_info_remote(const std::string& name)
     }
 }
 
-// ─── Download Bottle ────────────────────────────────────────────────────────
+// --- Download Bottle ---
 
 bool HomebrewBackend::download_bottle(const Package& pkg, const std::string& dest_path) {
     if (pkg.url.empty()) {
@@ -396,7 +391,7 @@ bool HomebrewBackend::download_bottle(const Package& pkg, const std::string& des
         });
 }
 
-// ─── Install Bottle ─────────────────────────────────────────────────────────
+// --- Install Bottle ---
 
 bool HomebrewBackend::install_bottle(const std::string& bottle_path, Package& pkg) {
     // Extract the bottle (tar.gz) to the prefix
@@ -450,7 +445,7 @@ bool HomebrewBackend::install_bottle(const std::string& bottle_path, Package& pk
     return true;
 }
 
-// ─── Uninstall Package ──────────────────────────────────────────────────────
+// --- Uninstall Package ---
 
 bool HomebrewBackend::uninstall(const Package& pkg) {
     // Remove Cellar directory
@@ -477,7 +472,7 @@ bool HomebrewBackend::uninstall(const Package& pkg) {
     return true;
 }
 
-// ─── Check Package Availability ─────────────────────────────────────────────
+// --- Check Package Availability ---
 
 bool HomebrewBackend::has_package(const std::string& name) const {
     // O(1) via hash map

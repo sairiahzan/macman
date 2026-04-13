@@ -1,18 +1,13 @@
-/*
- * ============================================================================
- *  aur_backend.cpp — Arch User Repository Source Builder Implementation
- * ============================================================================
- *  Fallback backend: queries AUR RPC API, downloads PKGBUILDs, and
- *  compiles packages from source using system clang for native Mach-O.
- *
- *  v2 improvements:
- *    - In-memory TTL cache for search/info (5 min) — instant repeated lookups
- *    - Self-healing build engine: captures build output, matches ~20 known
- *      Linux→macOS error patterns, auto-patches source, retries up to 3x
- *    - 3-level macOS compatibility system with red Linux-only warnings
- *    - Extended macOS wrapper script (sed, readlink, nproc, sha256sum, etc.)
- * ============================================================================
- */
+// aur_backend.cpp — Arch User Repository Source Builder Implementation
+// Fallback backend: queries AUR RPC API, downloads PKGBUILDs, and
+// compiles packages from source using system clang for native Mach-O.
+// v2 improvements:
+// - In-memory TTL cache for search/info (5 min) — instant repeated lookups
+// - Self-healing build engine: captures build output, matches ~20 known
+// Linux→macOS error patterns, auto-patches source, retries up to 3x
+// - 3-level macOS compatibility system with red Linux-only warnings
+// - Extended macOS wrapper script (sed, readlink, nproc, sha256sum, etc.)
+
 
 #include "backend/aur_backend.hpp"
 #include "macman.hpp"
@@ -32,7 +27,7 @@ namespace fs = std::filesystem;
 
 namespace macman {
 
-// ─── Constructor ────────────────────────────────────────────────────────────
+// --- Constructor ---
 
 AURBackend::AURBackend()
     : build_dir_(get_cache_dir() + "/builds") {
@@ -43,13 +38,13 @@ AURBackend::AURBackend()
     } catch (...) {}
 }
 
-// ─── Cache Validity Check ───────────────────────────────────────────────────
+// --- Cache Validity Check ---
 
 bool AURBackend::is_cache_valid(time_t timestamp) const {
     return (std::time(nullptr) - timestamp) < CACHE_TTL_SECONDS;
 }
 
-// ─── Search AUR (Cached) ───────────────────────────────────────────────────
+// --- Search AUR (Cached) ---
 
 std::vector<Package> AURBackend::search(const std::string& query) {
     // Check cache first
@@ -85,7 +80,7 @@ std::vector<Package> AURBackend::search(const std::string& query) {
     return results;
 }
 
-// ─── Get Package Info (Cached) ──────────────────────────────────────────────
+// --- Get Package Info (Cached) ---
 
 std::optional<Package> AURBackend::get_info(const std::string& name) {
     // Check cache first
@@ -115,7 +110,7 @@ std::optional<Package> AURBackend::get_info(const std::string& name) {
     return std::nullopt;
 }
 
-// ─── Convert AUR JSON to Package ────────────────────────────────────────────
+// --- Convert AUR JSON to Package ---
 
 Package AURBackend::aur_json_to_package(const nlohmann::json& result) const {
     Package pkg;
@@ -154,7 +149,7 @@ Package AURBackend::aur_json_to_package(const nlohmann::json& result) const {
     return pkg;
 }
 
-// ─── Download PKGBUILD ──────────────────────────────────────────────────────
+// --- Download PKGBUILD ---
 
 std::optional<PKGBUILDInfo> AURBackend::download_pkgbuild(const std::string& name) {
     // Download AUR snapshot
@@ -191,7 +186,7 @@ std::optional<PKGBUILDInfo> AURBackend::download_pkgbuild(const std::string& nam
     return parse_pkgbuild(pkgbuild_path);
 }
 
-// ─── Parse PKGBUILD File (Native Bash Dumper) ───────────────────────────────
+// --- Parse PKGBUILD File (Native Bash Dumper) ---
 
 PKGBUILDInfo AURBackend::parse_pkgbuild(const std::string& pkgbuild_path) const {
     PKGBUILDInfo info;
@@ -294,7 +289,7 @@ echo "END"
     return info;
 }
 
-// ─── macOS Compatibility Check (3-Level) ────────────────────────────────────
+// --- macOS Compatibility Check (3-Level) ---
 
 CompatLevel AURBackend::check_macos_compatibility(const PKGBUILDInfo& info) const {
     // Hard Linux-only dependencies → LINUX_ONLY
@@ -353,7 +348,7 @@ CompatLevel AURBackend::check_macos_compatibility(const PKGBUILDInfo& info) cons
     return CompatLevel::COMPATIBLE;
 }
 
-// ─── Get Incompatibility Reason (Human-Readable) ────────────────────────────
+// --- Get Incompatibility Reason (Human-Readable) ---
 
 std::string AURBackend::get_incompatibility_reason(const PKGBUILDInfo& info) const {
     std::vector<std::string> reasons;
@@ -413,7 +408,7 @@ std::string AURBackend::get_incompatibility_reason(const PKGBUILDInfo& info) con
     return result;
 }
 
-// ─── Download Source Files ──────────────────────────────────────────────────
+// --- Download Source Files ---
 
 bool AURBackend::download_sources(const PKGBUILDInfo& info, const std::string& work_dir) {
     for (const auto& src : info.source) {
@@ -460,7 +455,7 @@ bool AURBackend::download_sources(const PKGBUILDInfo& info, const std::string& w
     return true;
 }
 
-// ─── Known Build Error Fixes ────────────────────────────────────────────────
+// --- Known Build Error Fixes ---
 
 std::vector<BuildError> AURBackend::get_known_fixes() const {
     return {
@@ -518,7 +513,7 @@ std::vector<BuildError> AURBackend::get_known_fixes() const {
     };
 }
 
-// ─── Run Build Command and Capture Output ───────────────────────────────────
+// --- Run Build Command and Capture Output ---
 
 int AURBackend::run_build_capturing_output(const std::string& cmd, std::string& output) {
     output.clear();
@@ -540,7 +535,7 @@ int AURBackend::run_build_capturing_output(const std::string& cmd, std::string& 
     return ret;
 }
 
-// ─── Analyze Build Log and Apply Fixes ──────────────────────────────────────
+// --- Analyze Build Log and Apply Fixes ---
 
 bool AURBackend::analyze_and_fix_build(const std::string& build_log,
                                         const std::string& work_dir,
@@ -682,7 +677,7 @@ bool AURBackend::analyze_and_fix_build(const std::string& build_log,
     return any_fix_applied;
 }
 
-// ─── Compile Source (Self-Healing with Retry) ────────────────────────────────
+// --- Compile Source (Self-Healing with Retry) ---
 
 bool AURBackend::compile_source(const PKGBUILDInfo& info, const std::string& work_dir,
                                 const std::string& install_prefix,
@@ -877,7 +872,7 @@ if [ -n ")BASH" + info.package_commands + R"BASH(" ]; then
 fi
 )BASH";
 
-    // ─── Self-Healing Build Loop ────────────────────────────────────────
+    // --- Self-Healing Build Loop ---
 
     int ret = -1;
     std::string build_output;
@@ -978,7 +973,7 @@ fi
             // Calculate relative path from DESTDIR
             std::string relative_path = staged_path.substr(destdir.length()); 
             
-            // ── Path Remapping Logic ────────────────────────────────────
+            // --- Path Remapping Logic ---
             auto remap_sys_path = [&](const std::string& path) {
                 if (path.find("/usr/local/") == 0) return install_prefix + path.substr(10);
                 if (path.find("/usr/") == 0)       return install_prefix + path.substr(4);
@@ -1035,7 +1030,7 @@ fi
     return true;
 }
 
-// ─── Collect Installed Files ────────────────────────────────────────────────
+// --- Collect Installed Files ---
 
 std::vector<std::string> AURBackend::collect_installed_files(const std::string& prefix) const {
     std::vector<std::string> files;
@@ -1049,7 +1044,7 @@ std::vector<std::string> AURBackend::collect_installed_files(const std::string& 
     return files;
 }
 
-// ─── Build and Install (with Linux-Only Warning) ────────────────────────────
+// --- Build and Install (with Linux-Only Warning) ---
 
 bool AURBackend::build_and_install(const std::string& name, const std::string& install_prefix,
                                    std::vector<std::string>& installed_files) {
@@ -1122,7 +1117,7 @@ bool AURBackend::build_and_install(const std::string& name, const std::string& i
     return true;
 }
 
-// ─── Check Package Availability ─────────────────────────────────────────────
+// --- Check Package Availability ---
 
 bool AURBackend::has_package(const std::string& name) {
     auto info = get_info(name);

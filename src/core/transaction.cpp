@@ -1,11 +1,7 @@
-/*
- * ============================================================================
- *  transaction.cpp — Install/Remove Transaction Handler Implementation
- * ============================================================================
- *  Orchestrates full install/remove/upgrade workflows with dependency
- *  resolution, user prompts, download, extraction, and database updates.
- * ============================================================================
- */
+// transaction.cpp — Install/Remove Transaction Handler Implementation
+// Orchestrates full install/remove/upgrade workflows with dependency
+// resolution, user prompts, download, extraction, and database updates.
+
 
 #include "core/transaction.hpp"
 #include "backend/homebrew_backend.hpp"
@@ -24,11 +20,11 @@ namespace fs = std::filesystem;
 
 namespace macman {
 
-// ─── Constructor ────────────────────────────────────────────────────────────
+// --- Constructor ---
 
 Transaction::Transaction(Database& db) : db_(db) {}
 
-// ─── Resolve Package (Homebrew first, then AUR) ─────────────────────────────
+// --- Resolve Package (Homebrew first, then AUR) ---
 
 Package Transaction::resolve_package(const std::string& name) const {
     // Try Homebrew cache first (O(1) via hash map)
@@ -58,7 +54,7 @@ Package Transaction::resolve_package(const std::string& name) const {
     return empty;
 }
 
-// ─── User Confirmation Prompt ───────────────────────────────────────────────
+// --- User Confirmation Prompt ---
 
 bool Transaction::confirm_transaction(TransactionType type,
                                        const std::vector<Package>& packages,
@@ -109,7 +105,7 @@ bool Transaction::confirm_transaction(TransactionType type,
     return input.empty() || input == "Y" || input == "y" || input == "yes";
 }
 
-// ─── Resolve Dependencies ──────────────────────────────────────────────────
+// --- Resolve Dependencies ---
 
 bool Transaction::resolve_dependencies(const Package& pkg, 
                                         std::vector<std::string>& resolved) const {
@@ -129,7 +125,7 @@ bool Transaction::resolve_dependencies(const Package& pkg,
     return true;
 }
 
-// ─── Find Orphaned Dependencies ─────────────────────────────────────────────
+// --- Find Orphaned Dependencies ---
 
 std::vector<std::string> Transaction::find_orphan_deps(const std::string& pkg_name) const {
     std::vector<std::string> orphans;
@@ -163,7 +159,7 @@ std::vector<std::string> Transaction::find_orphan_deps(const std::string& pkg_na
     return orphans;
 }
 
-// ─── Download and Install a Single Package ──────────────────────────────────
+// --- Download and Install a Single Package ---
 
 bool Transaction::download_and_install(const Package& pkg, const std::string& reason) {
     Package installed = pkg;
@@ -217,7 +213,7 @@ bool Transaction::download_and_install(const Package& pkg, const std::string& re
     return true;
 }
 
-// ─── Remove Package Files ──────────────────────────────────────────────────
+// --- Remove Package Files ---
 
 bool Transaction::remove_package_files(const Package& pkg) {
     if (pkg.source == PackageSource::HOMEBREW) {
@@ -256,7 +252,7 @@ bool Transaction::remove_package_files(const Package& pkg) {
     }
 }
 
-// ─── Install Package(s) ────────────────────────────────────────────────────
+// --- Install Package(s) ---
 
 bool Transaction::install(const std::string& pkg_name, bool as_dependency) {
     // Check if already installed
@@ -420,7 +416,7 @@ bool Transaction::install_multiple(const std::vector<std::string>& packages) {
     return all_success;
 }
 
-// ─── Remove Package ────────────────────────────────────────────────────────
+// --- Remove Package ---
 
 bool Transaction::remove(const std::string& pkg_name, bool recursive) {
     auto pkg = db_.get_package(pkg_name);
@@ -471,7 +467,7 @@ bool Transaction::remove(const std::string& pkg_name, bool recursive) {
     return true;
 }
 
-// ─── Remove Multiple ───────────────────────────────────────────────────────
+// --- Remove Multiple ---
 
 bool Transaction::remove_multiple(const std::vector<std::string>& packages, bool recursive) {
     bool all_success = true;
@@ -483,7 +479,7 @@ bool Transaction::remove_multiple(const std::vector<std::string>& packages, bool
     return all_success;
 }
 
-// ─── Remove All (--nuke) ───────────────────────────────────────────────────
+// --- Remove All (--nuke) ---
 
 bool Transaction::remove_all() {
     auto installed = db_.get_all_packages();
@@ -523,7 +519,7 @@ bool Transaction::remove_all() {
     return true;
 }
 
-// ─── Refresh Databases ─────────────────────────────────────────────────────
+// --- Refresh Databases ---
 
 bool Transaction::refresh_databases() {
     HomebrewBackend brew;
@@ -532,7 +528,7 @@ bool Transaction::refresh_databases() {
     return success;
 }
 
-// ─── Upgrade All ────────────────────────────────────────────────────────────
+// --- Upgrade All ---
 
 bool Transaction::upgrade_all() {
     colors::print_action("Starting full system upgrade...");

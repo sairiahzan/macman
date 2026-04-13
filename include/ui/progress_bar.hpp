@@ -1,12 +1,8 @@
-/*
- * ============================================================================
- *  progress_bar.hpp — Pacman-Style Progress Bar Renderer
- * ============================================================================
- *  Renders a terminal progress bar that mimics Arch Linux pacman's output:
- *    package-name    (42%) [########--------]  50.8 MiB / 110.3 MiB  2.5 MiB/s
- *  Supports terminal width detection, speed/ETA calculation, and animation.
- * ============================================================================
- */
+// progress_bar.hpp — Pacman-Style Progress Bar Renderer
+// Renders a terminal progress bar that mimics Arch Linux pacman's output:
+// package-name    (42%) [########--------]  50.8 MiB / 110.3 MiB  2.5 MiB/s
+// Supports terminal width detection, speed/ETA calculation, and animation.
+
 
 #pragma once
 
@@ -18,27 +14,27 @@ namespace macman {
 
 class ProgressBar {
 public:
-    // ─── Constructor ────────────────────────────────────────────────────
+    // --- Constructor ---
 
     ProgressBar(const std::string& label, size_t total_bytes);
     ~ProgressBar() = default;
 
-    // ─── Update State ───────────────────────────────────────────────────
+    // --- Update State ---
 
     void update(size_t current_bytes, double speed = 0.0);
     void finish();
 
-    // ─── Rendering ──────────────────────────────────────────────────────
+    // --- Rendering ---
 
     void render();
 
-    // ─── Configuration ──────────────────────────────────────────────────
+    // --- Configuration ---
 
     void set_label(const std::string& label) { label_ = label; }
     void set_total(size_t total) { total_bytes_ = total; }
     void set_bar_width(int width) { bar_width_ = width; }
     
-    // ─── State Queries ──────────────────────────────────────────────────
+    // --- State Queries ---
 
     bool is_complete() const { return complete_; }
     double get_percentage() const;
@@ -56,7 +52,7 @@ private:
     std::chrono::steady_clock::time_point start_time_;
     std::chrono::steady_clock::time_point last_update_;
 
-    // ─── Formatting Helpers ─────────────────────────────────────────────
+    // --- Formatting Helpers ---
 
     int get_terminal_width() const;
     std::string format_bytes(size_t bytes) const;
@@ -64,7 +60,7 @@ private:
     std::string build_bar_string(double percentage, int width) const;
 };
 
-// ─── Multi-Progress Display ─────────────────────────────────────────────────
+// --- Multi-Progress Display ---
 // Manages multiple concurrent progress bars (for parallel downloads)
 
 class MultiProgress {

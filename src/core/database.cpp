@@ -1,11 +1,7 @@
-/*
- * ============================================================================
- *  database.cpp — Local Package Database Implementation
- * ============================================================================
- *  JSON-based local database that stores all installed package metadata.
- *  Supports CRUD operations, file ownership queries, and persistence.
- * ============================================================================
- */
+// database.cpp — Local Package Database Implementation
+// JSON-based local database that stores all installed package metadata.
+// Supports CRUD operations, file ownership queries, and persistence.
+
 
 #include "core/database.hpp"
 #include "macman.hpp"
@@ -19,12 +15,12 @@ namespace fs = std::filesystem;
 
 namespace macman {
 
-// ─── Constructor ────────────────────────────────────────────────────────────
+// --- Constructor ---
 
 Database::Database(const std::string& db_path) 
     : db_path_(db_path.empty() ? get_local_db() : db_path) {}
 
-// ─── Ensure Required Directories Exist ──────────────────────────────────────
+// --- Ensure Required Directories Exist ---
 
 bool Database::ensure_directories() const {
     try {
@@ -53,7 +49,7 @@ bool Database::ensure_directories() const {
     }
 }
 
-// ─── Load Database from Disk ────────────────────────────────────────────────
+// --- Load Database from Disk ---
 
 bool Database::load() {
     if (!fs::exists(db_path_)) {
@@ -85,7 +81,7 @@ bool Database::load() {
     }
 }
 
-// ─── Save Database to Disk ──────────────────────────────────────────────────
+// --- Save Database to Disk ---
 
 bool Database::save() const {
     try {
@@ -115,14 +111,14 @@ bool Database::save() const {
     }
 }
 
-// ─── Add Package ────────────────────────────────────────────────────────────
+// --- Add Package ---
 
 bool Database::add_package(const Package& pkg) {
     packages_[pkg.name] = pkg;
     return save();
 }
 
-// ─── Remove Package ─────────────────────────────────────────────────────────
+// --- Remove Package ---
 
 bool Database::remove_package(const std::string& name) {
     auto it = packages_.find(name);
@@ -133,7 +129,7 @@ bool Database::remove_package(const std::string& name) {
     return save();
 }
 
-// ─── Update Package ─────────────────────────────────────────────────────────
+// --- Update Package ---
 
 bool Database::update_package(const Package& pkg) {
     if (packages_.find(pkg.name) == packages_.end()) {
@@ -143,13 +139,13 @@ bool Database::update_package(const Package& pkg) {
     return save();
 }
 
-// ─── Check if Installed ─────────────────────────────────────────────────────
+// --- Check if Installed ---
 
 bool Database::is_installed(const std::string& name) const {
     return packages_.find(name) != packages_.end();
 }
 
-// ─── Get Single Package ─────────────────────────────────────────────────────
+// --- Get Single Package ---
 
 std::optional<Package> Database::get_package(const std::string& name) const {
     auto it = packages_.find(name);
@@ -159,7 +155,7 @@ std::optional<Package> Database::get_package(const std::string& name) const {
     return std::nullopt;
 }
 
-// ─── Get All Packages ───────────────────────────────────────────────────────
+// --- Get All Packages ---
 
 std::vector<Package> Database::get_all_packages() const {
     std::vector<Package> result;
@@ -170,7 +166,7 @@ std::vector<Package> Database::get_all_packages() const {
     return result;
 }
 
-// ─── Search Installed Packages ──────────────────────────────────────────────
+// --- Search Installed Packages ---
 
 std::vector<Package> Database::search_installed(const std::string& query) const {
     std::vector<Package> results;
@@ -192,7 +188,7 @@ std::vector<Package> Database::search_installed(const std::string& query) const 
     return results;
 }
 
-// ─── Find File Owner ────────────────────────────────────────────────────────
+// --- Find File Owner ---
 
 std::string Database::find_owner(const std::string& filepath) const {
     for (const auto& [name, pkg] : packages_) {
@@ -205,7 +201,7 @@ std::string Database::find_owner(const std::string& filepath) const {
     return "";
 }
 
-// ─── Get Files of Package ───────────────────────────────────────────────────
+// --- Get Files of Package ---
 
 std::vector<std::string> Database::get_files(const std::string& pkg_name) const {
     auto it = packages_.find(pkg_name);
@@ -215,7 +211,7 @@ std::vector<std::string> Database::get_files(const std::string& pkg_name) const 
     return {};
 }
 
-// ─── Statistics ─────────────────────────────────────────────────────────────
+// --- Statistics ---
 
 size_t Database::package_count() const {
     return packages_.size();

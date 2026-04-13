@@ -1,11 +1,7 @@
-/*
- * ============================================================================
- *  config.cpp — Configuration File Manager Implementation
- * ============================================================================
- *  Implements reading/writing of macman.conf, default generation, and
- *  accessor methods for configuration values.
- * ============================================================================
- */
+// config.cpp — Configuration File Manager Implementation
+// Implements reading/writing of macman.conf, default generation, and
+// accessor methods for configuration values.
+
 
 #include "core/config.hpp"
 #include "macman.hpp"
@@ -18,14 +14,14 @@ namespace fs = std::filesystem;
 
 namespace macman {
 
-// ─── Singleton Access ───────────────────────────────────────────────────────
+// --- Singleton Access ---
 
 Config& Config::instance() {
     static Config instance;
     return instance;
 }
 
-// ─── Set Default Values ─────────────────────────────────────────────────────
+// --- Set Default Values ---
 
 void Config::set_defaults() {
     settings_["CacheDir"]          = macman::get_cache_dir();
@@ -36,7 +32,7 @@ void Config::set_defaults() {
     settings_["Verbose"]           = "false";
 }
 
-// ─── Load Configuration ─────────────────────────────────────────────────────
+// --- Load Configuration ---
 
 bool Config::load(const std::string& path) {
     config_path_ = path.empty() ? macman::get_config_file() : path;
@@ -82,7 +78,7 @@ bool Config::load(const std::string& path) {
     return true;
 }
 
-// ─── Save Configuration ─────────────────────────────────────────────────────
+// --- Save Configuration ---
 
 bool Config::save(const std::string& path) const {
     std::string save_path = path.empty() ? config_path_ : path;
@@ -112,7 +108,7 @@ bool Config::save(const std::string& path) const {
     return true;
 }
 
-// ─── Create Default Config File ─────────────────────────────────────────────
+// --- Create Default Config File ---
 
 void Config::create_default(const std::string& path) const {
     std::string save_path = path.empty() ? macman::get_config_file() : path;
@@ -143,7 +139,7 @@ void Config::create_default(const std::string& path) const {
     file << "Verbose = false\n";
 }
 
-// ─── Getters ────────────────────────────────────────────────────────────────
+// --- Getters ---
 
 std::string Config::get_cache_dir() const {
     return get("CacheDir", macman::get_cache_dir());
@@ -179,7 +175,7 @@ std::string Config::get(const std::string& key, const std::string& default_val) 
     return (it != settings_.end()) ? it->second : default_val;
 }
 
-// ─── Setter ─────────────────────────────────────────────────────────────────
+// --- Setter ---
 
 void Config::set(const std::string& key, const std::string& value) {
     settings_[key] = value;

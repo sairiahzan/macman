@@ -1,11 +1,7 @@
-/*
- * ============================================================================
- *  argument_parser.cpp — CLI Argument Parser Implementation
- * ============================================================================
- *  Parses command-line arguments in pacman style (-S, -Ss, -Syu, etc.)
- *  and generates help/usage/version output.
- * ============================================================================
- */
+// argument_parser.cpp — CLI Argument Parser Implementation
+// Parses command-line arguments in pacman style (-S, -Ss, -Syu, etc.)
+// and generates help/usage/version output.
+
 
 #include "cli/argument_parser.hpp"
 #include "cli/colors.hpp"
@@ -15,7 +11,7 @@
 
 namespace macman {
 
-// ─── Parse Sync Flags (-S...) ───────────────────────────────────────────────
+// --- Parse Sync Flags (-S...) ---
 
 Operation ArgumentParser::parse_sync_flags(const std::string& flags) const {
     // -Syu (has both y and u)
@@ -38,7 +34,7 @@ Operation ArgumentParser::parse_sync_flags(const std::string& flags) const {
     return Operation::SYNC_INSTALL;
 }
 
-// ─── Parse Remove Flags (-R...) ─────────────────────────────────────────────
+// --- Parse Remove Flags (-R...) ---
 
 Operation ArgumentParser::parse_remove_flags(const std::string& flags) const {
     // -Rs (recursive removal)
@@ -49,7 +45,7 @@ Operation ArgumentParser::parse_remove_flags(const std::string& flags) const {
     return Operation::REMOVE;
 }
 
-// ─── Parse Query Flags (-Q...) ──────────────────────────────────────────────
+// --- Parse Query Flags (-Q...) ---
 
 Operation ArgumentParser::parse_query_flags(const std::string& flags) const {
     // -Qi (info)
@@ -68,7 +64,7 @@ Operation ArgumentParser::parse_query_flags(const std::string& flags) const {
     return Operation::QUERY_LIST;
 }
 
-// ─── Main Parse Function ───────────────────────────────────────────────────
+// --- Main Parse Function ---
 
 ParsedArgs ArgumentParser::parse(int argc, char* argv[]) {
     ParsedArgs args;
@@ -141,7 +137,7 @@ ParsedArgs ArgumentParser::parse(int argc, char* argv[]) {
     return args;
 }
 
-// ─── Print Version ──────────────────────────────────────────────────────────
+// --- Print Version ---
 
 void ArgumentParser::print_version() {
     std::cout << colors::BOLD_CYAN;
@@ -154,7 +150,7 @@ void ArgumentParser::print_version() {
     std::cout << std::endl;
 }
 
-// ─── Print Usage ────────────────────────────────────────────────────────────
+// --- Print Usage ---
 
 void ArgumentParser::print_usage() {
     std::cout << "usage:  " << colors::BOLD_WHITE << "macman" << colors::RESET 
@@ -163,7 +159,7 @@ void ArgumentParser::print_usage() {
               << " {-h --help}" << std::endl;
 }
 
-// ─── Print Full Help ────────────────────────────────────────────────────────
+// --- Print Full Help ---
 
 void ArgumentParser::print_help() {
     print_version();

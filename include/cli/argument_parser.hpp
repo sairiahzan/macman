@@ -1,11 +1,7 @@
-/*
- * ============================================================================
- *  argument_parser.hpp — CLI Argument Parser
- * ============================================================================
- *  Parses pacman-compatible command-line arguments and maps them to
- *  operations. Handles all -S, -R, -Q flags and their sub-options.
- * ============================================================================
- */
+// argument_parser.hpp — CLI Argument Parser
+// Parses pacman-compatible command-line arguments and maps them to
+// operations. Handles all -S, -R, -Q flags and their sub-options.
+
 
 #pragma once
 
@@ -14,7 +10,7 @@
 
 namespace macman {
 
-// ─── Operation Types ────────────────────────────────────────────────────────
+// --- Operation Types ---
 
 enum class Operation {
     NONE,
@@ -34,7 +30,7 @@ enum class Operation {
     HELP                // -h / --help  : Show help
 };
 
-// ─── Parsed Arguments ───────────────────────────────────────────────────────
+// --- Parsed Arguments ---
 
 struct ParsedArgs {
     Operation operation = Operation::NONE;
@@ -44,25 +40,25 @@ struct ParsedArgs {
     bool color = true;                      // --color=auto/always/never
 };
 
-// ─── Argument Parser Class ──────────────────────────────────────────────────
+// --- Argument Parser Class ---
 
 class ArgumentParser {
 public:
     ArgumentParser() = default;
     ~ArgumentParser() = default;
 
-    // ─── Parse Arguments ────────────────────────────────────────────────
+    // --- Parse Arguments ---
 
     ParsedArgs parse(int argc, char* argv[]);
 
-    // ─── Help & Usage ───────────────────────────────────────────────────
+    // --- Help & Usage ---
 
     static void print_help();
     static void print_version();
     static void print_usage();
 
 private:
-    // ─── Sub-parsers ────────────────────────────────────────────────────
+    // --- Sub-parsers ---
 
     Operation parse_sync_flags(const std::string& flags) const;
     Operation parse_remove_flags(const std::string& flags) const;

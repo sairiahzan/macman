@@ -1,11 +1,7 @@
-/*
- * ============================================================================
- *  http_client.cpp — libcurl HTTP Client Implementation
- * ============================================================================
- *  Implements HTTP GET, JSON fetching, and file downloads using libcurl.
- *  Provides connection reuse, progress callbacks, and proper error handling.
- * ============================================================================
- */
+// http_client.cpp — libcurl HTTP Client Implementation
+// Implements HTTP GET, JSON fetching, and file downloads using libcurl.
+// Provides connection reuse, progress callbacks, and proper error handling.
+
 
 #include "net/http_client.hpp"
 #include "macman.hpp"
@@ -15,7 +11,7 @@
 
 namespace macman {
 
-// ─── Callback Data Structs ──────────────────────────────────────────────────
+// --- Callback Data Structs ---
 
 struct WriteData {
     std::string* response;
@@ -30,7 +26,7 @@ struct ProgressData {
     std::chrono::steady_clock::time_point start_time;
 };
 
-// ─── Global Init / Cleanup ──────────────────────────────────────────────────
+// --- Global Init / Cleanup ---
 
 void http_global_init() {
     curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -40,7 +36,7 @@ void http_global_cleanup() {
     curl_global_cleanup();
 }
 
-// ─── Constructor / Destructor ───────────────────────────────────────────────
+// --- Constructor / Destructor ---
 
 HttpClient::HttpClient() 
     : curl_handle_(nullptr), 
@@ -55,7 +51,7 @@ HttpClient::~HttpClient() {
     }
 }
 
-// ─── Common CURL Setup ─────────────────────────────────────────────────────
+// --- Common CURL Setup ---
 
 void HttpClient::setup_common(CURL* handle, const std::string& url) {
     curl_easy_setopt(handle, CURLOPT_URL, url.c_str());
@@ -68,7 +64,7 @@ void HttpClient::setup_common(CURL* handle, const std::string& url) {
     curl_easy_setopt(handle, CURLOPT_ACCEPT_ENCODING, ""); // Accept all encodings
 }
 
-// ─── CURL Write Callback (String) ───────────────────────────────────────────
+// --- CURL Write Callback (String) ---
 
 size_t HttpClient::write_callback(char* ptr, size_t size, size_t nmemb, void* userdata) {
     size_t total_size = size * nmemb;
@@ -77,7 +73,7 @@ size_t HttpClient::write_callback(char* ptr, size_t size, size_t nmemb, void* us
     return total_size;
 }
 
-// ─── CURL Write Callback (File) ─────────────────────────────────────────────
+// --- CURL Write Callback (File) ---
 
 size_t HttpClient::file_write_callback(char* ptr, size_t size, size_t nmemb, void* userdata) {
     size_t total_size = size * nmemb;
@@ -86,7 +82,7 @@ size_t HttpClient::file_write_callback(char* ptr, size_t size, size_t nmemb, voi
     return data->file->good() ? total_size : 0;
 }
 
-// ─── CURL Progress Callback ────────────────────────────────────────────────
+// --- CURL Progress Callback ---
 
 int HttpClient::progress_callback_wrapper(void* clientp, curl_off_t dltotal,
                                            curl_off_t dlnow, curl_off_t /*ultotal*/,
@@ -104,7 +100,7 @@ int HttpClient::progress_callback_wrapper(void* clientp, curl_off_t dltotal,
     return 0; // 0 = continue, 1 = abort
 }
 
-// ─── GET Request ────────────────────────────────────────────────────────────
+// --- GET Request ---
 
 HttpResponse HttpClient::get(const std::string& url) {
     HttpResponse response;
@@ -135,7 +131,7 @@ HttpResponse HttpClient::get(const std::string& url) {
     return response;
 }
 
-// ─── GET JSON ───────────────────────────────────────────────────────────────
+// --- GET JSON ---
 
 HttpResponse HttpClient::get_json(const std::string& url) {
     HttpResponse response;
@@ -172,7 +168,7 @@ HttpResponse HttpClient::get_json(const std::string& url) {
     return response;
 }
 
-// ─── Download File with Progress ────────────────────────────────────────────
+// --- Download File with Progress ---
 
 bool HttpClient::download_file(const std::string& url, 
                                 const std::string& output_path,
@@ -251,7 +247,7 @@ bool HttpClient::download_file(const std::string& url,
     return success;
 }
 
-// ─── Configuration ──────────────────────────────────────────────────────────
+// --- Configuration ---
 
 void HttpClient::set_timeout(int seconds) {
     timeout_ = seconds;

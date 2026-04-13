@@ -1,16 +1,11 @@
-/*
- * ============================================================================
- *  homebrew_backend.hpp — Homebrew Formulae API Integration
- * ============================================================================
- *  Backend that interfaces with Homebrew's public JSON API to search,
- *  fetch info, and download prebuilt bottles for macOS packages.
- *  Primary package source — tried before AUR fallback.
- *
- *  Performance: Uses pre-computed search index (hash map + lowercase cache)
- *  for O(1) exact-match and fast substring search without repeated
- *  string lowercasing at query time.
- * ============================================================================
- */
+// homebrew_backend.hpp — Homebrew Formulae API Integration
+// Backend that interfaces with Homebrew's public JSON API to search,
+// fetch info, and download prebuilt bottles for macOS packages.
+// Primary package source — tried before AUR fallback.
+// Performance: Uses pre-computed search index (hash map + lowercase cache)
+// for O(1) exact-match and fast substring search without repeated
+// string lowercasing at query time.
+
 
 #pragma once
 
@@ -29,31 +24,31 @@ public:
     HomebrewBackend();
     ~HomebrewBackend() = default;
 
-    // ─── Database Sync ──────────────────────────────────────────────────
+    // --- Database Sync ---
 
     bool refresh_formula_cache();
     bool refresh_cask_cache();
     bool is_cache_fresh() const;
 
-    // ─── Search ─────────────────────────────────────────────────────────
+    // --- Search ---
 
     std::vector<Package> search(const std::string& query) const;
     
-    // ─── Package Info ───────────────────────────────────────────────────
+    // --- Package Info ---
 
     std::optional<Package> get_info(const std::string& name) const;
     std::optional<Package> get_info_remote(const std::string& name);
 
-    // ─── Download ───────────────────────────────────────────────────────
+    // --- Download ---
 
     bool download_bottle(const Package& pkg, const std::string& dest_path);
     
-    // ─── Install ────────────────────────────────────────────────────────
+    // --- Install ---
     
     bool install_bottle(const std::string& bottle_path, Package& pkg);
     bool uninstall(const Package& pkg);
 
-    // ─── Package Availability Check ─────────────────────────────────────
+    // --- Package Availability Check ---
 
     bool has_package(const std::string& name) const;
 
@@ -63,7 +58,7 @@ private:
     nlohmann::json cask_cache_;
     std::string cache_path_;
     
-    // ─── Search Index (Performance) ─────────────────────────────────────
+    // --- Search Index (Performance) ---
     // Pre-computed at cache load time to avoid repeated work during search.
 
     // name → index into formula_cache_ array for O(1) exact-match lookup
@@ -80,7 +75,7 @@ private:
     // Cached macOS version string (detected once, reused everywhere)
     mutable std::string cached_macos_version_;
 
-    // ─── Internal Helpers ───────────────────────────────────────────────
+    // --- Internal Helpers ---
 
     Package parse_formula(const nlohmann::json& formula, bool resolve_bottle_url = true) const;
     std::string get_bottle_url(const nlohmann::json& formula) const;

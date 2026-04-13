@@ -1,11 +1,7 @@
-/*
- * ============================================================================
- *  transaction.hpp — Install/Remove Transaction Handler
- * ============================================================================
- *  Orchestrates package installation and removal with dependency resolution,
- *  user confirmation prompts, progress tracking, and rollback on failure.
- * ============================================================================
- */
+// transaction.hpp — Install/Remove Transaction Handler
+// Orchestrates package installation and removal with dependency resolution,
+// user confirmation prompts, progress tracking, and rollback on failure.
+
 
 #pragma once
 
@@ -21,7 +17,7 @@ namespace macman {
 class HomebrewBackend;
 class AURBackend;
 
-// ─── Transaction Types ──────────────────────────────────────────────────────
+// --- Transaction Types ---
 
 enum class TransactionType {
     INSTALL,
@@ -29,19 +25,19 @@ enum class TransactionType {
     UPGRADE
 };
 
-// ─── Transaction Class ──────────────────────────────────────────────────────
+// --- Transaction Class ---
 
 class Transaction {
 public:
     Transaction(Database& db);
     ~Transaction() = default;
 
-    // ─── Install Operations ─────────────────────────────────────────────
+    // --- Install Operations ---
 
     bool install(const std::string& pkg_name, bool as_dependency = false);
     bool install_multiple(const std::vector<std::string>& packages);
     
-    // ─── Remove Operations ──────────────────────────────────────────────
+    // --- Remove Operations ---
 
     bool remove(const std::string& pkg_name, bool recursive = false);
     bool remove_multiple(const std::vector<std::string>& packages, bool recursive = false);
@@ -49,12 +45,12 @@ public:
     // Completely wipe all packages and clear cache
     bool remove_all();
 
-    // ─── Upgrade Operations ─────────────────────────────────────────────
+    // --- Upgrade Operations ---
 
     bool upgrade_all();
     bool refresh_databases();
 
-    // ─── Configuration ──────────────────────────────────────────────────
+    // --- Configuration ---
 
     void set_no_confirm(bool val) { no_confirm_ = val; }
 
@@ -62,7 +58,7 @@ private:
     Database& db_;
     bool no_confirm_ = false;
 
-    // ─── Internal Helpers ───────────────────────────────────────────────
+    // --- Internal Helpers ---
 
     bool confirm_transaction(TransactionType type, 
                              const std::vector<Package>& packages,

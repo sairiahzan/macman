@@ -1,11 +1,7 @@
-/*
- * ============================================================================
- *  progress_bar.cpp — Pacman-Style Progress Bar Implementation
- * ============================================================================
- *  Renders a terminal progress bar that mimics pacman:
- *    package-name     (42%) [########--------]  50.8 MiB / 110.3 MiB  2.5 MiB/s
- * ============================================================================
- */
+// progress_bar.cpp — Pacman-Style Progress Bar Implementation
+// Renders a terminal progress bar that mimics pacman:
+// package-name     (42%) [########--------]  50.8 MiB / 110.3 MiB  2.5 MiB/s
+
 
 #include "ui/progress_bar.hpp"
 #include "cli/colors.hpp"
@@ -19,14 +15,14 @@
 
 namespace macman {
 
-// ─── Constructor ────────────────────────────────────────────────────────────
+// --- Constructor ---
 
 ProgressBar::ProgressBar(const std::string& label, size_t total_bytes)
     : label_(label), total_bytes_(total_bytes),
       start_time_(std::chrono::steady_clock::now()),
       last_update_(std::chrono::steady_clock::now()) {}
 
-// ─── Update Progress ────────────────────────────────────────────────────────
+// --- Update Progress ---
 
 void ProgressBar::update(size_t current_bytes, double speed) {
     current_bytes_ = current_bytes;
@@ -35,7 +31,7 @@ void ProgressBar::update(size_t current_bytes, double speed) {
     render();
 }
 
-// ─── Mark as Finished ───────────────────────────────────────────────────────
+// --- Mark as Finished ---
 
 void ProgressBar::finish() {
     current_bytes_ = total_bytes_;
@@ -44,7 +40,7 @@ void ProgressBar::finish() {
     std::cout << std::endl; // Move to new line after completion
 }
 
-// ─── Get Terminal Width ─────────────────────────────────────────────────────
+// --- Get Terminal Width ---
 
 int ProgressBar::get_terminal_width() const {
     struct winsize w;
@@ -54,7 +50,7 @@ int ProgressBar::get_terminal_width() const {
     return 80; // Default fallback
 }
 
-// ─── Format Bytes to Human-Readable ─────────────────────────────────────────
+// --- Format Bytes to Human-Readable ---
 
 std::string ProgressBar::format_bytes(size_t bytes) const {
     const char* units[] = {"B", "KiB", "MiB", "GiB"};
@@ -75,7 +71,7 @@ std::string ProgressBar::format_bytes(size_t bytes) const {
     return oss.str();
 }
 
-// ─── Format Speed ───────────────────────────────────────────────────────────
+// --- Format Speed ---
 
 std::string ProgressBar::format_speed(double bytes_per_sec) const {
     if (bytes_per_sec <= 0) return "---";
@@ -91,7 +87,7 @@ std::string ProgressBar::format_speed(double bytes_per_sec) const {
     return oss.str();
 }
 
-// ─── Build Bar String ───────────────────────────────────────────────────────
+// --- Build Bar String ---
 
 std::string ProgressBar::build_bar_string(double percentage, int width) const {
     int filled = static_cast<int>(std::round(percentage * width / 100.0));
@@ -110,20 +106,20 @@ std::string ProgressBar::build_bar_string(double percentage, int width) const {
     return bar;
 }
 
-// ─── Get Percentage ─────────────────────────────────────────────────────────
+// --- Get Percentage ---
 
 double ProgressBar::get_percentage() const {
     if (total_bytes_ == 0) return 0.0;
     return (static_cast<double>(current_bytes_) / static_cast<double>(total_bytes_)) * 100.0;
 }
 
-// ─── Get Speed String ───────────────────────────────────────────────────────
+// --- Get Speed String ---
 
 std::string ProgressBar::get_speed_string() const {
     return format_speed(speed_);
 }
 
-// ─── Get ETA String ─────────────────────────────────────────────────────────
+// --- Get ETA String ---
 
 std::string ProgressBar::get_eta_string() const {
     if (speed_ <= 0 || current_bytes_ >= total_bytes_) return "";
@@ -140,7 +136,7 @@ std::string ProgressBar::get_eta_string() const {
     return oss.str();
 }
 
-// ─── Render the Progress Bar ────────────────────────────────────────────────
+// --- Render the Progress Bar ---
 
 void ProgressBar::render() {
     double pct = get_percentage();
@@ -191,7 +187,7 @@ void ProgressBar::render() {
     std::cout.flush();
 }
 
-// ─── MultiProgress Implementation ──────────────────────────────────────────
+// --- MultiProgress Implementation ---
 
 int MultiProgress::add_bar(const std::string& label, size_t total) {
     std::lock_guard<std::mutex> lock(render_mutex_);

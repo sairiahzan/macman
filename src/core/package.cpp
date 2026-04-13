@@ -1,11 +1,7 @@
-/*
- * ============================================================================
- *  package.cpp — Package Struct Implementation
- * ============================================================================
- *  Implements JSON serialization/deserialization, version comparison,
- *  and human-readable formatting for the Package data structure.
- * ============================================================================
- */
+// package.cpp — Package Struct Implementation
+// Implements JSON serialization/deserialization, version comparison,
+// and human-readable formatting for the Package data structure.
+
 
 #include "core/package.hpp"
 #include "cli/colors.hpp"
@@ -15,7 +11,7 @@
 
 namespace macman {
 
-// ─── JSON Serialization ─────────────────────────────────────────────────────
+// --- JSON Serialization ---
 
 nlohmann::json Package::to_json() const {
     return nlohmann::json{
@@ -36,7 +32,7 @@ nlohmann::json Package::to_json() const {
     };
 }
 
-// ─── JSON Deserialization ───────────────────────────────────────────────────
+// --- JSON Deserialization ---
 
 Package Package::from_json(const nlohmann::json& j) {
     Package pkg;
@@ -67,7 +63,7 @@ Package Package::from_json(const nlohmann::json& j) {
     return pkg;
 }
 
-// ─── Human-Readable Size Formatting ─────────────────────────────────────────
+// --- Human-Readable Size Formatting ---
 
 std::string Package::format_size(size_t bytes) const {
     const char* units[] = {"B", "KiB", "MiB", "GiB", "TiB"};
@@ -88,7 +84,7 @@ std::string Package::format_size(size_t bytes) const {
     return oss.str();
 }
 
-// ─── Summary Line (for search results) ─────────────────────────────────────
+// --- Summary Line (for search results) ---
 
 std::string Package::summary_line() const {
     std::ostringstream oss;

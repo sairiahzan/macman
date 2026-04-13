@@ -1,12 +1,8 @@
-/*
- * ============================================================================
- *  config.hpp — Configuration File Manager
- * ============================================================================
- *  Manages the macman configuration file (/usr/local/etc/macman.conf).
- *  Provides read/write access to user-configurable settings like cache
- *  directory, parallel download count, color output, and logging.
- * ============================================================================
- */
+// config.hpp — Configuration File Manager
+// Manages the macman configuration file (/usr/local/etc/macman.conf).
+// Provides read/write access to user-configurable settings like cache
+// directory, parallel download count, color output, and logging.
+
 
 #pragma once
 
@@ -17,17 +13,17 @@ namespace macman {
 
 class Config {
 public:
-    // ─── Singleton Access ───────────────────────────────────────────────
+    // --- Singleton Access ---
 
     static Config& instance();
 
-    // ─── Load / Save ────────────────────────────────────────────────────
+    // --- Load / Save ---
 
     bool load(const std::string& path = "");
     bool save(const std::string& path = "") const;
     void create_default(const std::string& path = "") const;
 
-    // ─── Getters ────────────────────────────────────────────────────────
+    // --- Getters ---
 
     std::string get_cache_dir() const;
     std::string get_db_dir() const;
@@ -37,7 +33,7 @@ public:
     bool        get_verbose() const;
     std::string get(const std::string& key, const std::string& default_val = "") const;
 
-    // ─── Setters ────────────────────────────────────────────────────────
+    // --- Setters ---
 
     void set(const std::string& key, const std::string& value);
 

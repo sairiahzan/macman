@@ -1,11 +1,7 @@
-/*
- * ============================================================================
- *  package.hpp — Package Data Structure
- * ============================================================================
- *  Defines the Package struct that represents a software package throughout
- *  macman. Includes JSON serialization/deserialization and version comparison.
- * ============================================================================
- */
+// package.hpp — Package Data Structure
+// Defines the Package struct that represents a software package throughout
+// macman. Includes JSON serialization/deserialization and version comparison.
+
 
 #pragma once
 
@@ -16,7 +12,7 @@
 
 namespace macman {
 
-// ─── Package Source Enum ────────────────────────────────────────────────────
+// --- Package Source Enum ---
 
 enum class PackageSource {
     HOMEBREW,   // Installed from Homebrew formulae API
@@ -40,7 +36,7 @@ inline PackageSource string_to_source(const std::string& s) {
     return PackageSource::LOCAL;
 }
 
-// ─── Package Struct ─────────────────────────────────────────────────────────
+// --- Package Struct ---
 
 struct Package {
     std::string name;                       // Package name (e.g., "wget")
@@ -60,7 +56,7 @@ struct Package {
     std::string install_date;               // ISO 8601 install timestamp
     std::string install_reason;             // "explicit" or "dependency"
 
-    // ─── Version Comparison ─────────────────────────────────────────────
+    // --- Version Comparison ---
 
     bool operator==(const Package& other) const {
         return name == other.name && version == other.version;
@@ -70,12 +66,12 @@ struct Package {
         return !(*this == other);
     }
 
-    // ─── JSON Serialization ─────────────────────────────────────────────
+    // --- JSON Serialization ---
 
     nlohmann::json to_json() const;
     static Package from_json(const nlohmann::json& j);
 
-    // ─── Display Helpers ────────────────────────────────────────────────
+    // --- Display Helpers ---
 
     std::string format_size(size_t bytes) const;
     std::string summary_line() const;
