@@ -30,3 +30,16 @@
 *.exe
 *.out
 *.app
+
+# CMake and Build artifacts
+build/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+Makefile
+cmake_install.cmake
+
+# macOS Specific
+.DS_Store
+.AppleDouble
+.LSOverride
