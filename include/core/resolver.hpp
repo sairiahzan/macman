@@ -1,4 +1,4 @@
-// resolver.hpp — Dependency Resolution & Engine
+// resolver.hpp — Dependency Resolution & Engine [V1.1.0 Patch]
 // Orchestrates package queries, parallelized remote API lookups,
 // and resolves deep dependency trees including constraint mapping.
 

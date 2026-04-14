@@ -1,4 +1,4 @@
-// installer.cpp
+// installer.cpp [V1.1.0 Patch]
 
 #include "core/installer.hpp"
 #include "backend/homebrew_backend.hpp"

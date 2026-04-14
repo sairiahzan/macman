@@ -1,4 +1,4 @@
-// package.hpp — Package Data Structure
+// package.hpp — Package Data Structure [V1.1.0 Patch]
 // Defines the Package struct that represents a software package throughout
 // macman. Includes JSON serialization/deserialization and version comparison.
 

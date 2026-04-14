@@ -1,4 +1,4 @@
-// aur_backend.cpp — Arch User Repository Source Builder Implementation
+// aur_backend.cpp — Arch User Repository Source Builder Implementation [V1.1.0 Patch]
 // Fallback backend: queries AUR RPC API, downloads PKGBUILDs, and
 // compiles packages from source using system clang for native Mach-O.
 // v2 improvements:

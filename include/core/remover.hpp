@@ -1,4 +1,4 @@
-// remover.hpp — Package Removal Engine
+// remover.hpp — Package Removal Engine [V1.1.0 Patch]
 // Handles safe deletion of files, cache cleaning, and the Nuke mechanism.
 
 

@@ -1,4 +1,4 @@
-// installer.hpp — Atomic Installation Orchestrator
+// installer.hpp — Atomic Installation Orchestrator [V1.1.0 Patch]
 // Handles downloading, checksumming, staging, fixing RPATHs,
 // and atomically publishing the package to its final location.
 

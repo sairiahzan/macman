@@ -1,4 +1,4 @@
-// resolver.cpp
+// resolver.cpp [V1.1.0 Patch]
 
 #include "core/resolver.hpp"
 #include "backend/homebrew_backend.hpp"

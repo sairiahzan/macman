@@ -1,4 +1,4 @@
-// macman.hpp — Global Constants, Version Info, and System Paths
+// macman.hpp — Global Constants, Version Info, and System Paths [V1.1.0 Patch]
 // Central header that defines all compile-time constants used across macman.
 // Includes version string, directory paths, API endpoints, and branding.
 

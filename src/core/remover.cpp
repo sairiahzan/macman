@@ -1,4 +1,4 @@
-// remover.cpp
+// remover.cpp [V1.1.0 Patch]
 
 #include "core/remover.hpp"
 #include "core/resolver.hpp"

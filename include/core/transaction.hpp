@@ -1,4 +1,4 @@
-// transaction.hpp — Install/Remove Transaction Handler
+// transaction.hpp — Install/Remove Transaction Handler [V1.1.0 Patch]
 // Orchestrates package installation and removal with dependency resolution,
 // user confirmation prompts, progress tracking, and rollback on failure.
 

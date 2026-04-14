@@ -1,4 +1,4 @@
-// http_client.cpp — libcurl HTTP Client Implementation
+// http_client.cpp — libcurl HTTP Client Implementation [V1.1.0 Patch]
 // Implements HTTP GET, JSON fetching, and file downloads using libcurl.
 // Provides connection reuse, progress callbacks, and proper error handling.
 
