@@ -45,7 +45,7 @@ public:
     
     // --- Install ---
     
-    bool install_bottle(const std::string& bottle_path, Package& pkg);
+    bool install_bottle(const std::string& bottle_path, const std::string& deploy_dir, std::vector<std::string>& installed_files);
     bool uninstall(const Package& pkg);
 
     // --- Package Availability Check ---

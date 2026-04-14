@@ -41,6 +41,9 @@ set(MACMAN_SOURCES
     src/core/config.cpp
     src/core/database.cpp
     src/core/transaction.cpp
+    src/core/resolver.cpp
+    src/core/installer.cpp
+    src/core/remover.cpp
 
     # Network
     src/net/http_client.cpp

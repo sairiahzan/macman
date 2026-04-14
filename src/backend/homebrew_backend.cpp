@@ -270,6 +270,9 @@ std::string HomebrewBackend::get_bottle_url(const nlohmann::json& formula) const
 
         // Try exact macOS version first
         if (files.contains(macos_ver)) {
+            if (files[macos_ver].contains("url")) {
+                return files[macos_ver].value("url", "");
+            }
             std::string sha = files[macos_ver].value("sha256", "");
             // Construct the GHCR URL
             std::string pkg_name = formula.value("name", "");
@@ -278,6 +281,9 @@ std::string HomebrewBackend::get_bottle_url(const nlohmann::json& formula) const
 
         // Try "all" architecture
         if (files.contains("all")) {
+            if (files["all"].contains("url")) {
+                return files["all"].value("url", "");
+            }
             std::string sha = files["all"].value("sha256", "");
             std::string pkg_name = formula.value("name", "");
             return root_url + "/" + pkg_name + "/blobs/sha256:" + sha;
@@ -384,61 +390,34 @@ bool HomebrewBackend::download_bottle(const Package& pkg, const std::string& des
 
     ProgressBar progress(pkg.name, pkg.download_size);
 
-    return http.download_file(pkg.url, dest_path,
+    auto response = http.download_file(pkg.url, dest_path,
         [&progress](size_t total, size_t current, double speed) {
             if (total > 0) progress.set_total(total);
             progress.update(current, speed);
         });
+    return response.success;
 }
 
 // --- Install Bottle ---
 
-bool HomebrewBackend::install_bottle(const std::string& bottle_path, Package& pkg) {
-    // Extract the bottle (tar.gz) to the prefix
-    std::string extract_dir = get_prefix() + "/Cellar/" + pkg.name + "/" + pkg.version;
-    
-    // Create target directory
-    if (!fs::exists(extract_dir)) {
-        fs::create_directories(extract_dir);
-    }
+bool HomebrewBackend::install_bottle(const std::string& bottle_path, const std::string& deploy_dir, std::vector<std::string>& installed_files) {
+    // Determine the brew package name from the bottle path (or caller could pass it, but we can extract it or just use deploy_dir generic structure)
+    // Actually, getting the exact pkg.name is tricky here without modifying the signature again.
+    // Let's just unpack the tarball directly into deploy_dir.
 
-    // Extract the bottle archive
-    std::string cmd = "tar xzf '" + bottle_path + "' -C '" + get_prefix() + "/Cellar/' 2>/dev/null";
+    // A macman stage install should just dump everything into deploy_dir. 
+    std::string cmd = "tar xzf '" + bottle_path + "' -C '" + deploy_dir + "/' --strip-components=2 2>/dev/null";
     int ret = system(cmd.c_str());
     
     if (ret != 0) {
-        // Try without Cellar path (some bottles have different structure)
-        cmd = "tar xzf '" + bottle_path + "' -C '" + extract_dir + "/' --strip-components=2 2>/dev/null";
-        ret = system(cmd.c_str());
-        if (ret != 0) {
-            colors::print_error("Failed to extract bottle for " + pkg.name);
-            return false;
-        }
+        colors::print_error("Failed to extract bottle to stage");
+        return false;
     }
 
-    // Create symlinks in bin, lib, include, share under macman prefix
-    std::vector<std::string> link_dirs = {"bin", "lib", "include", "share"};
-    for (const auto& dir : link_dirs) {
-        std::string src_dir = extract_dir + "/" + dir;
-        std::string dst_dir = get_prefix() + "/" + dir;
-        
-        if (fs::exists(src_dir)) {
-            if (!fs::exists(dst_dir)) {
-                fs::create_directories(dst_dir);
-            }
-            
-            for (const auto& entry : fs::directory_iterator(src_dir)) {
-                std::string link_path = dst_dir + "/" + entry.path().filename().string();
-                try {
-                    if (fs::exists(link_path) || fs::is_symlink(link_path)) {
-                        fs::remove(link_path);
-                    }
-                    fs::create_symlink(entry.path(), link_path);
-                    pkg.installed_files.push_back(link_path);
-                } catch (const std::exception& e) {
-                    colors::print_warning("Could not create link: " + link_path);
-                }
-            }
+    // Traverse the unzipped directory to record installed files
+    for (const auto& entry : fs::recursive_directory_iterator(deploy_dir)) {
+        if (!entry.is_directory()) {
+            installed_files.push_back(entry.path().string());
         }
     }
 

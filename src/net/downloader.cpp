@@ -55,7 +55,7 @@ DownloadResult Downloader::download(const DownloadTask& task) {
     HttpClient http;
     http.set_timeout(DOWNLOAD_TIMEOUT_SECS);
 
-    bool success = http.download_file(task.url, task.output_path,
+    HttpResponse response = http.download_file(task.url, task.output_path,
         [&progress](size_t total, size_t current, double speed) {
             if (total > 0) {
                 progress.set_total(total);
@@ -63,7 +63,7 @@ DownloadResult Downloader::download(const DownloadTask& task) {
             progress.update(current, speed);
         });
 
-    if (success) {
+    if (response.success) {
         progress.finish();
         
         // Cache the downloaded file
@@ -77,7 +77,7 @@ DownloadResult Downloader::download(const DownloadTask& task) {
         result.success = true;
     } else {
         std::cout << std::endl; // New line after failed progress bar
-        result.error = "Download failed: " + task.url;
+        result.error = "Download failed: " + task.url + " (" + response.error + ")";
         result.success = false;
     }
 

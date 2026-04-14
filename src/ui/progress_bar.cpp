@@ -163,10 +163,12 @@ void ProgressBar::render() {
     std::string size_info = current_str + " / " + total_str;
 
     // Calculate available space for the bar
-    // label(20) + space(1) + pct(6) + space(1) + bar + space(1) + size_info + space(1) + speed
-    int fixed_width = label_width + 1 + 6 + 1 + 1 + (int)size_info.length() + 1 + (int)speed_str.length();
-    int available = term_width - fixed_width - 2; // 2 for brackets
-    int actual_bar_width = std::max(10, std::min(available, 30));
+    // label(20) + space(1) + pct(6) + space(1) + space(1) + size_info + space(2) + speed
+    int fixed_width = label_width + 1 + 6 + 1 + 1 + (int)size_info.length() + 2 + (int)speed_str.length();
+    
+    // Safely calculate remaining space for the progress bar
+    int available = term_width - fixed_width - 8; // generous margin
+    int actual_bar_width = std::max(5, std::min(available, 20)); // shorter bar as requested
 
     std::string bar = build_bar_string(pct, actual_bar_width);
 
@@ -176,7 +178,7 @@ void ProgressBar::render() {
     else if (pct >= 50.0) pct_color = colors::BOLD_YELLOW;
 
     // Build final line
-    std::cout << "\r" 
+    std::cout << "\r\x1b[2K" 
               << colors::BOLD_WHITE << display_label
               << " " << pct_color << percentage_str.str()
               << " " << colors::BOLD_CYAN << bar

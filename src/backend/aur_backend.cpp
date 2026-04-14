@@ -19,9 +19,14 @@
 #include <sstream>
 #include <algorithm>
 #include <regex>
+#include <set>
 #include <cstdlib>
 #include <array>
 #include <iostream>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 namespace fs = std::filesystem;
 
@@ -159,8 +164,9 @@ std::optional<PKGBUILDInfo> AURBackend::download_pkgbuild(const std::string& nam
 
     colors::print_substatus("Downloading PKGBUILD for " + name + "...");
 
-    if (!http_.download_file(snapshot_url, snapshot_path)) {
-        colors::print_error("Failed to download PKGBUILD for " + name);
+    auto response = http_.download_file(snapshot_url, snapshot_path);
+    if (!response.success) {
+        colors::print_error("Failed to download PKGBUILD for " + name + " (" + response.error + ")");
         return std::nullopt;
     }
 
@@ -474,6 +480,14 @@ std::vector<BuildError> AURBackend::get_known_fixes() const {
          "header_stub", "sys/epoll.h"},
         {"sys/prctl.h", "Linux prctl header not found",
          "header_stub", "sys/prctl.h"},
+        {"malloc.h", "malloc.h is not used on macOS",
+         "header_stub", "malloc.h"},
+        {"endian.h", "endian.h not found, stubbing (handled by compat header)",
+         "header_stub", "endian.h"},
+        {"byteswap.h", "byteswap.h not found, stubbing (handled by compat header)",
+         "header_stub", "byteswap.h"},
+        {"pty.h", "pty.h not found, stubbing",
+         "header_stub", "pty.h"},
 
         // Undeclared identifiers → add #define or typedef
         {"MSG_NOSIGNAL", "MSG_NOSIGNAL not available on macOS",
@@ -488,8 +502,48 @@ std::vector<BuildError> AURBackend::get_known_fixes() const {
          "define", "#ifndef accept4\n#define accept4(fd, addr, len, flags) accept(fd, addr, len)\n#endif"},
         {"getauxval", "getauxval() not available on macOS",
          "define", "#ifndef getauxval\nstatic inline unsigned long getauxval(unsigned long t) { (void)t; return 0; }\n#endif"},
+        {"TEMP_FAILURE_RETRY", "TEMP_FAILURE_RETRY not available on macOS",
+         "define", "#ifndef TEMP_FAILURE_RETRY\n#define TEMP_FAILURE_RETRY(exp) ({ \\\n    __typeof__(exp) _rc; \\\n    do { \\\n        _rc = (exp); \\\n    } while (_rc == -1 && errno == EINTR); \\\n    _rc; \\\n})\n#endif"},
         {"malloc_usable_size", "malloc_usable_size() not on macOS (use malloc_size)",
          "define", "#ifdef __APPLE__\n#include <malloc/malloc.h>\n#define malloc_usable_size(p) malloc_size(p)\n#endif"},
+
+        // CMake missing tool/executable errors → patch CMakeLists.txt
+        {"sphinx-build' not found", "Disabling Sphinx documentation build",
+         "cmake_patch", "sphinx"},
+        {"sphinx-build: not found", "Disabling Sphinx documentation build",
+         "cmake_patch", "sphinx"},
+        {"Sphinx' not found", "Disabling Sphinx documentation build",
+         "cmake_patch", "sphinx"},
+        {"doxygen: not found", "Disabling Doxygen documentation build",
+         "cmake_patch", "doxygen"},
+        {"Doxygen' not found", "Disabling Doxygen documentation build",
+         "cmake_patch", "doxygen"},
+        {"Could NOT find ALSA", "Disabling ALSA (Linux-only audio)",
+         "cmake_patch", "alsa"},
+        {"Could NOT find LibNL", "Disabling libnl (Linux-only networking)",
+         "cmake_patch", "libnl"},
+        {"Could NOT find Libnl", "Disabling libnl (Linux-only networking)",
+         "cmake_patch", "libnl"},
+        {"i3ipc library not found", "Disabling i3wm IPC support",
+         "cmake_patch", "i3"},
+        {"Could NOT find PulseAudio", "Disabling PulseAudio (Linux-only)",
+         "cmake_patch", "pulseaudio"},
+
+        // Missing build tools → install via Homebrew
+        {"Could NOT find PkgConfig", "Installing pkg-config via Homebrew",
+         "tool_install", "pkg-config"},
+        {"PKG_CONFIG_EXECUTABLE", "Installing pkg-config via Homebrew",
+         "tool_install", "pkg-config"},
+        {"Could not find a package configuration file provided by \"Python", "Installing python3 via Homebrew",
+         "tool_install", "python3"},
+        {"Could NOT find Python", "Installing python3 via Homebrew",
+         "tool_install", "python3"},
+
+        // Unsupported compiler checks → patch cmake files
+        {"unsupported compiler", "Patching unsupported compiler check for AppleClang",
+         "cmake_patch", "unsupported"},
+        {"Unsupported compiler", "Patching unsupported compiler check for AppleClang",
+         "cmake_patch", "unsupported"},
 
         // Linker errors → remove Linux-only libs
         {"library not found for -lrt", "librt not needed on macOS",
@@ -510,20 +564,58 @@ std::vector<BuildError> AURBackend::get_known_fixes() const {
          "cflag_remove", "-Werror=format-truncation"},
         {"-Wno-format-truncation", "GCC-specific warning flag",
          "cflag_remove", "-Wno-format-truncation"},
+
+        // pkg-config missing packages → install via Homebrew
+        {"Package '" , "Auto-installing missing pkg-config dependency",
+         "pkg_not_found", ""},
+        {"required packages were not found", "Auto-installing missing pkg-config dependencies",
+         "pkg_not_found", ""},
+
+        // BSD ar empty archive (header-only libs on macOS)
+        {"no archive members specified", "Fixing empty static library for macOS BSD ar",
+         "empty_archive", ""},
     };
 }
 
 // --- Run Build Command and Capture Output ---
 
+#ifdef __APPLE__
+#include <crt_externs.h>
+#define GET_ENVIRON (*_NSGetEnviron())
+#else
+extern char **environ;
+#define GET_ENVIRON environ
+#endif
+
 int AURBackend::run_build_capturing_output(const std::string& cmd, std::string& output) {
     output.clear();
-    // Redirect both stdout and stderr to a temp file so we can parse errors
     std::string log_file = build_dir_ + "/build_output.log";
-    std::string full_cmd = cmd + " > '" + log_file + "' 2>&1";
+
+    // Setup file descriptor for posix_spawn output redirection
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+
+    // Open log_file for writing (O_WRONLY | O_CREAT | O_TRUNC), mode 0644
+    posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, log_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     
-    int ret = system(full_cmd.c_str());
+    // Dup stderr to stdout
+    posix_spawn_file_actions_adddup2(&actions, STDOUT_FILENO, STDERR_FILENO);
+
+    pid_t pid;
+    const char* argv[] = {"sh", "-c", cmd.c_str(), nullptr};
     
-    // Read the log file
+    int status = posix_spawn(&pid, "/bin/sh", &actions, nullptr, (char* const*)argv, GET_ENVIRON);
+    posix_spawn_file_actions_destroy(&actions);
+
+    if (status == 0) {
+        int wait_status;
+        waitpid(pid, &wait_status, 0);
+        status = WIFEXITED(wait_status) ? WEXITSTATUS(wait_status) : -1;
+    } else {
+        status = -1; // spawn failed
+    }
+
+    // Read the log file back into the output string
     try {
         std::ifstream file(log_file);
         if (file.is_open()) {
@@ -532,7 +624,7 @@ int AURBackend::run_build_capturing_output(const std::string& cmd, std::string& 
         }
     } catch (...) {}
 
-    return ret;
+    return status;
 }
 
 // --- Analyze Build Log and Apply Fixes ---
@@ -646,6 +738,306 @@ bool AURBackend::analyze_and_fix_build(const std::string& build_log,
                 any_fix_applied = true;
             }
         }
+        else if (fix.fix_type == "cmake_patch") {
+            // Patch CMakeLists.txt files: remove REQUIRED from problematic find calls,
+            // comment out add_subdirectory(doc), and inject cmake -D flags.
+            std::string tool = fix.fix_value; // e.g. "sphinx", "alsa", "doxygen"
+            
+            for (const auto& entry : fs::recursive_directory_iterator(src_dir)) {
+                if (!entry.is_regular_file()) continue;
+                std::string fname = entry.path().filename().string();
+                if (fname != "CMakeLists.txt" && fname.find(".cmake") == std::string::npos) continue;
+                
+                try {
+                    std::string content;
+                    {
+                        std::ifstream f(entry.path());
+                        content = std::string((std::istreambuf_iterator<char>(f)),
+                                               std::istreambuf_iterator<char>());
+                    }
+                    
+                    bool modified = false;
+                    std::string lower_tool = tool;
+                    std::transform(lower_tool.begin(), lower_tool.end(), lower_tool.begin(), ::tolower);
+                    
+                    // Convert content to lines for line-by-line processing
+                    std::istringstream stream(content);
+                    std::string line;
+                    std::string new_content;
+                    
+                    while (std::getline(stream, line)) {
+                        std::string lower_line = line;
+                        std::transform(lower_line.begin(), lower_line.end(), lower_line.begin(), ::tolower);
+                        
+                        bool should_comment = false;
+                        
+                        // Comment out find_program/find_package for the tool
+                        if ((lower_line.find("find_program") != std::string::npos ||
+                             lower_line.find("find_package") != std::string::npos) &&
+                            lower_line.find(lower_tool) != std::string::npos) {
+                            should_comment = true;
+                        }
+                        
+                        // Comment out add_subdirectory(doc) for sphinx/doxygen
+                        if ((lower_tool == "sphinx" || lower_tool == "doxygen") &&
+                            lower_line.find("add_subdirectory") != std::string::npos &&
+                            lower_line.find("doc") != std::string::npos) {
+                            should_comment = true;
+                        }
+                        
+                        // Comment out message(FATAL_ERROR) that mention the tool
+                        if (lower_line.find("fatal_error") != std::string::npos &&
+                            lower_line.find(lower_tool) != std::string::npos) {
+                            should_comment = true;
+                        }
+                        
+                        if (should_comment) {
+                            new_content += "# [macman patched] " + line + "\n";
+                            modified = true;
+                        } else {
+                            // Also remove REQUIRED keyword from find calls for this tool
+                            if ((lower_line.find("find_package") != std::string::npos) &&
+                                lower_line.find(lower_tool) != std::string::npos &&
+                                line.find("REQUIRED") != std::string::npos) {
+                                size_t rpos = line.find("REQUIRED");
+                                line.erase(rpos, 8);
+                                modified = true;
+                            }
+                            new_content += line + "\n";
+                        }
+                    }
+                    
+                    if (modified) {
+                        std::ofstream f(entry.path());
+                        f << new_content;
+                        any_fix_applied = true;
+                    }
+                } catch (...) {}
+            }
+        }
+        else if (fix.fix_type == "tool_install") {
+            // Install a missing build tool via Homebrew and ensure it's in PATH
+            std::string tool = fix.fix_value;
+            
+            // Detect Homebrew prefix
+            std::string brew_prefix = fs::exists("/opt/homebrew/bin") ? "/opt/homebrew" : "/usr/local";
+            std::string tool_path = brew_prefix + "/bin/" + tool;
+            
+            if (!fs::exists(tool_path)) {
+//                 colors::print_substatus("Installing " + tool + " via Homebrew...");
+                std::string cmd = brew_prefix + "/bin/brew install " + tool + " 2>/dev/null";
+                system(cmd.c_str());
+            }
+            
+            // Inject Homebrew bin into PATH using double quotes so $PATH expands
+            if (env_setup.find("export PATH=") == std::string::npos) {
+                env_setup = "export PATH=\"" + brew_prefix + "/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH\" && " + env_setup;
+            }
+            
+            // Also explicitly set PKG_CONFIG_EXECUTABLE if this is pkg-config
+            if (tool == "pkg-config" && fs::exists(brew_prefix + "/bin/pkg-config")) {
+                env_setup += " PKG_CONFIG_EXECUTABLE='" + brew_prefix + "/bin/pkg-config' ";
+            }
+            
+            any_fix_applied = true;
+        }
+        else if (fix.fix_type == "pkg_not_found") {
+            // Extract package names from pkg-config error messages and install via Homebrew
+            // Common pattern: "Package 'cairo-fc' not found" or "- cairo-fc"
+            std::string brew_prefix = fs::exists("/opt/homebrew/bin") ? "/opt/homebrew" : "/usr/local";
+            std::string brew_user;
+            if (const char* su = std::getenv("SUDO_USER")) {
+                brew_user = std::string("sudo -u ") + su + " ";
+            }
+
+            // Mapping from pkg-config names to Homebrew formula names
+            // More specific entries MUST come before generic ones
+            std::vector<std::pair<std::string, std::string>> pkg_to_brew = {
+                {"cairo-fc", "cairo"},
+                {"cairo-ft", "cairo"},
+                {"cairo-pdf", "cairo"},
+                {"cairo-png", "cairo"},
+                {"cairo-svg", "cairo"},
+                {"cairo-xlib", "cairo"},
+                {"cairo-xcb", "cairo"},
+                {"cairo", "cairo"},
+                {"pangocairo", "pango"},
+                {"pango", "pango"},
+                {"glib-2.0", "glib"},
+                {"gobject-2.0", "glib"},
+                {"gio-2.0", "glib"},
+                {"jsoncpp", "jsoncpp"},
+                {"libcurl", "curl"},
+                {"libuv", "libuv"},
+                {"xcb-proto", "xcb-proto"},
+                {"xcb-util-image", "xcb-util-image"},
+                {"xcb-util-wm", "xcb-util-wm"},
+                {"xcb-util-xrm", "xcb-util-xrm"},
+                {"xcb-util-cursor", "xcb-util-cursor"},
+                {"xcb-util-renderutil", "xcb-util-renderutil"},
+                {"xcb-util-keysyms", "xcb-util-keysyms"},
+                {"xcb-util", "xcb-util"},
+                {"xcb-image", "xcb-util-image"},
+                {"xcb-ewmh", "xcb-util-wm"},
+                {"xcb-icccm", "xcb-util-wm"},
+                {"xcb-xrm", "xcb-util-xrm"},
+                {"xcb-cursor", "xcb-util-cursor"},
+                {"xcb-renderutil", "xcb-util-renderutil"},
+                {"xcb-xkb", "libxcb"},
+                {"xcb-randr", "libxcb"},
+                {"xcb-composite", "libxcb"},
+                {"xcb-shape", "libxcb"},
+                {"xcb-shm", "libxcb"},
+                {"xcb-render", "libxcb"},
+                {"xcb", "libxcb"},
+                {"xproto", "xorgproto"},
+                {"x11", "libx11"},
+                {"x11-xcb", "libx11"},
+                {"xext", "libxext"},
+                {"fontconfig", "fontconfig"},
+                {"freetype2", "freetype"},
+                {"harfbuzz", "harfbuzz"},
+                {"libpng", "libpng"},
+                {"pixman-1", "pixman"},
+                {"zlib", "zlib"},
+                {"expat", "expat"},
+            };
+
+            // Extract all package names from the build log
+            std::set<std::string> pkgs_to_install;
+            
+            // Pattern 1: "Package 'NAME' not found"
+            std::regex pkg_re("Package '([^']+)' not found");
+            auto it = std::sregex_iterator(build_log.begin(), build_log.end(), pkg_re);
+            for (; it != std::sregex_iterator(); ++it) {
+                pkgs_to_install.insert((*it)[1].str());
+            }
+            
+            // Pattern 2: "    - NAME" after "required packages were not found"
+            std::regex dash_re("^\\s+-\\s+(\\S+)", std::regex::multiline);
+            auto it2 = std::sregex_iterator(build_log.begin(), build_log.end(), dash_re);
+            for (; it2 != std::sregex_iterator(); ++it2) {
+                pkgs_to_install.insert((*it2)[1].str());
+            }
+
+            for (const auto& pkg_name : pkgs_to_install) {
+                // Find the brew formula name — prefer exact match, then prefix match
+                std::string brew_name = pkg_name; // default: try same name
+                bool found_exact = false;
+                for (const auto& [pc_name, formula] : pkg_to_brew) {
+                    if (pkg_name == pc_name) {
+                        brew_name = formula;
+                        found_exact = true;
+                        break;
+                    }
+                }
+                if (!found_exact) {
+                    for (const auto& [pc_name, formula] : pkg_to_brew) {
+                        if (pkg_name.find(pc_name) == 0) {
+                            brew_name = formula;
+                            break;
+                        }
+                    }
+                }
+                
+                // Check if .pc file already exists in any Homebrew pkgconfig dir
+                bool already_available = false;
+                for (const auto& opt_entry : fs::directory_iterator(brew_prefix + "/opt")) {
+                    std::string pc1 = opt_entry.path().string() + "/lib/pkgconfig/" + pkg_name + ".pc";
+                    std::string pc2 = opt_entry.path().string() + "/share/pkgconfig/" + pkg_name + ".pc";
+                    if (fs::exists(pc1) || fs::exists(pc2)) {
+                        already_available = true;
+                        break;
+                    }
+                }
+                if (already_available) continue;
+                
+                colors::print_substatus("Self-healing: Installing " + brew_name + " (provides " + pkg_name + ")...");
+                std::string cmd = brew_user + brew_prefix + "/bin/brew install " + brew_name + " >/dev/null 2>&1";
+                system(cmd.c_str());
+                any_fix_applied = true;
+            }
+            
+            // Refresh PKG_CONFIG_PATH to include ALL Homebrew pkgconfig dirs
+            std::string extra_pc_paths;
+            for (const auto& entry : fs::directory_iterator(brew_prefix + "/opt")) {
+                std::string pc_lib = entry.path().string() + "/lib/pkgconfig";
+                std::string pc_share = entry.path().string() + "/share/pkgconfig";
+                if (fs::exists(pc_lib)) extra_pc_paths += pc_lib + ":";
+                if (fs::exists(pc_share)) extra_pc_paths += pc_share + ":";
+            }
+            if (!extra_pc_paths.empty()) {
+                // Update PKG_CONFIG_PATH in env_setup
+                size_t pos = env_setup.find("PKG_CONFIG_PATH='");
+                if (pos != std::string::npos) {
+                    size_t val_start = pos + 17;
+                    env_setup.insert(val_start, extra_pc_paths);
+                }
+                any_fix_applied = true;
+            }
+        }
+        else if (fix.fix_type == "empty_archive") {
+            // macOS BSD ar rejects empty archives; GNU ar on Linux creates them.
+            // Fix: find the library's CMakeLists.txt and add a dummy source file.
+            std::regex lib_re("Linking CXX static library ([^\\n]+\\.a)");
+            std::smatch lib_match;
+            if (std::regex_search(build_log, lib_match, lib_re)) {
+                std::string lib_path = lib_match[1].str();
+                std::string lib_filename = fs::path(lib_path).filename().string();
+                std::string lib_name = lib_filename;
+                if (lib_name.find("lib") == 0) lib_name = lib_name.substr(3);
+                if (lib_name.size() > 2 && lib_name.substr(lib_name.size() - 2) == ".a") {
+                    lib_name = lib_name.substr(0, lib_name.size() - 2);
+                }
+                
+                for (const auto& entry : fs::recursive_directory_iterator(src_dir)) {
+                    if (!entry.is_regular_file()) continue;
+                    if (entry.path().filename() != "CMakeLists.txt") continue;
+                    
+                    std::string content;
+                    {
+                        std::ifstream f(entry.path());
+                        content = std::string((std::istreambuf_iterator<char>(f)),
+                                               std::istreambuf_iterator<char>());
+                    }
+                    
+                    if (content.find("add_library(" + lib_name) != std::string::npos) {
+                        // Create dummy source file
+                        std::string dummy_path = entry.path().parent_path().string() + "/macman_dummy.cpp";
+                        if (!fs::exists(dummy_path)) {
+                            std::ofstream dummy(dummy_path);
+                            dummy << "// macman: dummy for macOS BSD ar compatibility\n";
+                            dummy << "namespace { int macman_dummy_symbol = 0; }\n";
+                            dummy.close();
+                        }
+                        
+                        // Patch add_library() to include the dummy file
+                        std::string target = "add_library(" + lib_name;
+                        size_t pos = content.find(target);
+                        if (pos != std::string::npos) {
+                            int depth = 0;
+                            size_t paren_start = content.find('(', pos);
+                            for (size_t i = paren_start; i < content.size(); i++) {
+                                if (content[i] == '(') depth++;
+                                if (content[i] == ')') {
+                                    depth--;
+                                    if (depth == 0) {
+                                        content.insert(i, " ${CMAKE_CURRENT_SOURCE_DIR}/macman_dummy.cpp");
+                                        break;
+                                    }
+                                }
+                            }
+                            
+                            std::ofstream f(entry.path());
+                            f << content;
+                            any_fix_applied = true;
+                            // colors::print_substatus("Self-healing: Added dummy source to " + lib_name + " for BSD ar");
+                        }
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     // Write the compat header
@@ -704,12 +1096,36 @@ bool AURBackend::compile_source(const PKGBUILDInfo& info, const std::string& wor
         }
     }
 
+    // Detect Homebrew prefix
+    std::string brew_prefix = fs::exists("/opt/homebrew/bin") ? "/opt/homebrew" : "/usr/local";
+
+    // Pre-build: Install essential build tools if missing
+    // Homebrew refuses to run as root — detect SUDO_USER and run brew as them
+    std::string brew_user;
+    if (const char* sudo_user = std::getenv("SUDO_USER")) {
+        brew_user = std::string("sudo -u ") + sudo_user + " ";
+    }
+    
+    std::vector<std::pair<std::string, std::string>> essential_tools = {
+        {"pkg-config", "pkgconf"},  // modern Homebrew installs pkgconf which provides pkg-config
+        {"cmake", "cmake"}
+    };
+    for (const auto& [tool_bin, brew_name] : essential_tools) {
+        std::string tool_path = brew_prefix + "/bin/" + tool_bin;
+        if (!fs::exists(tool_path)) {
+//             colors::print_substatus("Installing missing build tool: " + brew_name + "...");
+            std::string cmd = brew_user + brew_prefix + "/bin/brew install " + brew_name + " >/dev/null 2>&1";
+            system(cmd.c_str());
+        }
+    }
+
     // Set up environment for macOS compilation
-    std::string env_setup = "export CC=clang CXX=clang++ "
-                           "CFLAGS='-O2 -I/opt/homebrew/include -I/usr/local/include' "
-                           "CXXFLAGS='-O2 -I/opt/homebrew/include -I/usr/local/include' "
-                           "LDFLAGS='' "
-                           "PKG_CONFIG_PATH='/opt/homebrew/lib/pkgconfig:/usr/local/lib/pkgconfig' "
+    std::string env_setup = "export PATH=\"" + brew_prefix + "/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH\" && "
+                           "export CC=clang CXX=clang++ "
+                           "CFLAGS='-O2 -I" + brew_prefix + "/include -I/usr/local/include' "
+                           "CXXFLAGS='-O2 -I" + brew_prefix + "/include -I/usr/local/include' "
+                           "LDFLAGS='-L" + brew_prefix + "/lib -L/usr/local/lib' "
+                           "PKG_CONFIG_PATH='" + brew_prefix + "/lib/pkgconfig:" + brew_prefix + "/share/pkgconfig:/usr/local/lib/pkgconfig' "
                            "EXPAT_LIBPATH='/usr/lib' "
                            "PREFIX='" + install_prefix + "' && ";
 
@@ -727,9 +1143,14 @@ bool AURBackend::compile_source(const PKGBUILDInfo& info, const std::string& wor
     fs::create_directories(destdir + "/opt");
 
     // Extended macOS compatibility wrapper script
+    // PATH and PKG_CONFIG are injected INSIDE the script so they survive posix_spawn
     std::string wrapper_script = build_dir_ + "/macman_makepkg_wrapper.sh";
     std::string script_content = R"BASH(#!/bin/bash
 set -e
+
+# ── PATH & Tool Setup (injected by macman) ────────────────────────────────────
+export PATH=")BASH" + brew_prefix + R"BASH(/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+export PKG_CONFIG_EXECUTABLE=")BASH" + brew_prefix + R"BASH(/bin/pkg-config"
 
 # ── macOS Compatibility Wrappers ─────────────────────────────────────────────
 
@@ -844,10 +1265,14 @@ md5sum() {
 }
 
 # Export macOS-safe environment
-# srcdir = work directory (where sources are extracted/cloned)
-# This matches makepkg behavior — PKGBUILDs navigate into subdirs themselves
 export srcdir=")BASH" + work_dir + R"BASH("
 export pkgdir=")BASH" + destdir + R"BASH("
+
+# Source the original PKGBUILD so that all PKGBUILD-local variables (like _pkgname)
+# are properly evaluated for the build environment.
+source ")BASH" + build_dir_ + "/" + info.pkgname + "/PKGBUILD" + R"BASH("
+
+# Override variables that makepkg normally injects
 export pkgname=")BASH" + info.pkgname + R"BASH("
 export pkgver=")BASH" + info.pkgver + R"BASH("
 
@@ -863,11 +1288,28 @@ package() {
 )BASH" + info.package_commands + R"BASH(
 }
 
-if [ -n ")BASH" + info.build_commands + R"BASH(" ]; then
+if type extract >/dev/null 2>&1; then
+    cd "$srcdir"
+    extract
+fi
+
+if type prepare >/dev/null 2>&1; then
+    cd "$srcdir"
+    prepare
+fi
+
+if type pkgver >/dev/null 2>&1; then
+    cd "$srcdir"
+    pkgver
+fi
+
+if type build >/dev/null 2>&1; then
+    cd "$srcdir"
     build
 fi
 
-if [ -n ")BASH" + info.package_commands + R"BASH(" ]; then
+if type package >/dev/null 2>&1; then
+    cd "$srcdir"
     package
 fi
 )BASH";
@@ -902,13 +1344,12 @@ fi
         if (ret == 0) {
             // Build succeeded!
             if (attempt > 0) {
-                colors::print_success("Build succeeded after self-healing (" + 
-                                     std::to_string(attempt) + " fix round" + 
-                                     (attempt > 1 ? "s" : "") + " applied)");
+                // colors::print_success("Build succeeded after self-healing (" +
+                //                      std::to_string(attempt) + " fix round" +
+                //                      (attempt > 1 ? "s" : "") + " applied)");
             }
             break;
         }
-
         // Build failed — try to fix
         if (attempt < MAX_BUILD_RETRIES - 1) {
             colors::print_warning("Build failed. Analyzing errors...");
@@ -1060,29 +1501,8 @@ bool AURBackend::build_and_install(const std::string& name, const std::string& i
     if (compat == CompatLevel::LINUX_ONLY) {
         std::string reason = get_incompatibility_reason(*pkgbuild);
         
-        std::cout << std::endl;
-        std::cerr << colors::BOLD_RED 
-                  << "  ⚠  WARNING: This package is designed for the Linux kernel only."
-                  << colors::RESET << std::endl;
-        std::cerr << colors::BOLD_RED 
-                  << "     It uses Linux-specific APIs that cannot run on macOS."
-                  << colors::RESET << std::endl;
-        std::cerr << colors::RED 
-                  << "     Reason: " << reason
-                  << colors::RESET << std::endl;
-        std::cout << std::endl;
-        std::cout << colors::BOLD_YELLOW 
-                  << "  Do you want to attempt the build anyway? [y/N] " 
-                  << colors::RESET;
-
-        std::string input;
-        std::getline(std::cin, input);
-        
-        if (input != "y" && input != "Y" && input != "yes") {
-            colors::print_substatus("Build cancelled by user.");
-            return false;
-        }
-        std::cout << std::endl;
+        colors::print_warning("Linux kernel APIs detected (" + reason + ").");
+        colors::print_substatus("macman Self-Healing Engine engaging compatibility wrapper...");
     } 
     else if (compat == CompatLevel::PARTIAL) {
         colors::print_warning(name + " has partial macOS compatibility. Some features may not work.");
@@ -1125,3 +1545,4 @@ bool AURBackend::has_package(const std::string& name) {
 }
 
 } // namespace macman
+

@@ -39,10 +39,11 @@ public:
 
     HttpResponse get(const std::string& url);
     HttpResponse get_json(const std::string& url);
+    size_t get_file_size(const std::string& url);
     
     // --- File Download ---
 
-    bool download_file(const std::string& url, 
+    HttpResponse download_file(const std::string& url, 
                        const std::string& output_path,
                        ProgressCallback progress_cb = nullptr);
 

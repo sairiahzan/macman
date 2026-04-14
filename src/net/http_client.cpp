@@ -168,18 +168,76 @@ HttpResponse HttpClient::get_json(const std::string& url) {
     return response;
 }
 
+size_t HttpClient::get_file_size(const std::string& url) {
+    CURL* handle = curl_easy_init();
+    if (!handle) return 0;
+
+    setup_common(handle, url);
+    curl_easy_setopt(handle, CURLOPT_NOBODY, 1L); // HEAD request
+    curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 1L);
+
+    struct curl_slist* headers = nullptr;
+
+    // Handle GHCR Authentication for Homebrew bottles
+    if (url.find("ghcr.io/v2/") != std::string::npos) {
+        size_t v2_pos = url.find("ghcr.io/v2/");
+        size_t repo_start = v2_pos + 11;
+        size_t blobs_pos = url.find("/blobs/", repo_start);
+
+        if (blobs_pos != std::string::npos) {
+            std::string repo = url.substr(repo_start, blobs_pos - repo_start);
+            std::string token_url = "https://ghcr.io/token?service=ghcr.io&scope=repository:" + repo + ":pull";
+
+            auto auth_resp = get_json(token_url);
+            if (auth_resp.success) {
+                try {
+                    size_t tok_pos = auth_resp.body.find("\"token\":\"");
+                    if (tok_pos != std::string::npos) {
+                        tok_pos += 9;
+                        size_t end_pos = auth_resp.body.find("\"", tok_pos);
+                        if (end_pos != std::string::npos) {
+                            std::string token = auth_resp.body.substr(tok_pos, end_pos - tok_pos);
+                            std::string auth_header = "Authorization: Bearer " + token;
+                            headers = curl_slist_append(headers, auth_header.c_str());
+                            curl_easy_setopt(handle, CURLOPT_HTTPHEADER, headers);
+                        }
+                    }
+                } catch (...) {}
+            }
+        }
+    }
+
+    double file_size = 0.0;
+    CURLcode result = curl_easy_perform(handle);
+    
+    if (result == CURLE_OK) {
+        curl_easy_getinfo(handle, CURLINFO_CONTENT_LENGTH_DOWNLOAD, &file_size);
+    }
+    
+    if (headers) curl_slist_free_all(headers);
+    curl_easy_cleanup(handle);
+    return file_size > 0.0 ? static_cast<size_t>(file_size) : 0;
+}
+
 // --- Download File with Progress ---
 
-bool HttpClient::download_file(const std::string& url, 
-                                const std::string& output_path,
-                                ProgressCallback progress_cb) {
+HttpResponse HttpClient::download_file(const std::string& url, 
+                                        const std::string& output_path,
+                                        ProgressCallback progress_cb) {
+    HttpResponse response;
     CURL* handle = curl_easy_init();
-    if (!handle) return false;
+    if (!handle) {
+        response.error = "Failed to initialize CURL";
+        response.success = false;
+        return response;
+    }
 
     std::ofstream file(output_path, std::ios::binary);
     if (!file.is_open()) {
         curl_easy_cleanup(handle);
-        return false;
+        response.error = "Could not open output file: " + output_path;
+        response.success = false;
+        return response;
     }
 
     FileWriteData file_data{&file};
@@ -233,18 +291,22 @@ bool HttpClient::download_file(const std::string& url,
     }
 
     CURLcode result = curl_easy_perform(handle);
-    long http_code = 0;
-    curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &http_code);
+    curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &response.status_code);
     file.close();
 
-    bool success = (result == CURLE_OK && http_code >= 200 && http_code < 300);
-    if (!success) {
+    response.success = (result == CURLE_OK && response.status_code >= 200 && response.status_code < 300);
+    if (!response.success) {
         std::remove(output_path.c_str());
+        if (result != CURLE_OK) {
+            response.error = "cURL error: " + std::string(curl_easy_strerror(result));
+        } else {
+            response.error = "HTTP HTTP status: " + std::to_string(response.status_code);
+        }
     }
 
     if (headers) curl_slist_free_all(headers);
     curl_easy_cleanup(handle);
-    return success;
+    return response;
 }
 
 // --- Configuration ---

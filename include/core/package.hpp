@@ -66,6 +66,8 @@ struct Package {
         return !(*this == other);
     }
 
+    static int compare_versions(const std::string& v1, const std::string& v2);
+
     // --- JSON Serialization ---
 
     nlohmann::json to_json() const;
