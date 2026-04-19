@@ -168,6 +168,12 @@ std::vector<BuildError> SelfHealingEngine::get_known_fixes() const {
         {"required packages were not found", "Auto-installing missing pkg-config dependencies",
          "pkg_not_found", ""},
 
+        // C++11 narrowing errors (common in old code)
+        {"cannot be narrowed from type", "C++11 narrowing detected — adding -Wno-narrowing",
+         "cflag_add", "-Wno-narrowing"},
+        {"narrowing conversion", "C++11 narrowing detected — adding -Wno-narrowing",
+         "cflag_add", "-Wno-narrowing"},
+
         // BSD ar empty archive (header-only libs on macOS)
         {"no archive members specified", "Fixing empty static library for macOS BSD ar",
          "empty_archive", ""},
@@ -359,6 +365,23 @@ bool SelfHealingEngine::analyze_and_fix_build(const std::string& build_log,
             size_t pos;
             while ((pos = env_setup.find(flag)) != std::string::npos) {
                 env_setup.erase(pos, flag.length());
+                any_fix_applied = true;
+            }
+        }
+        else if (fix.fix_type == "cflag_add") {
+            std::string flag = fix.fix_value;
+            if (env_setup.find(flag) == std::string::npos) {
+                auto inject_into_var = [&](const std::string& var) {
+                    size_t pos = env_setup.find(var + "='");
+                    if (pos != std::string::npos) {
+                        size_t quote_end = env_setup.find("'", pos + var.length() + 2);
+                        if (quote_end != std::string::npos) {
+                            env_setup.insert(quote_end, " " + flag);
+                        }
+                    }
+                };
+                inject_into_var("CFLAGS");
+                inject_into_var("CXXFLAGS");
                 any_fix_applied = true;
             }
         }

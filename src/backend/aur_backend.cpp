@@ -449,12 +449,26 @@ bool AURBackend::download_sources(const PKGBUILDInfo& info, const std::string& w
             colors::print_substatus("Cloning git repository: " + git_url);
             cmd = "cd '" + work_dir + "' && git clone --depth 1 '" + git_url + "'" + clone_target + " 2>/dev/null";
         } else {
-            colors::print_substatus("Downloading source: " + raw_url);
-            cmd = "cd '" + work_dir + "' && curl -L -O -s '" + raw_url + "'";
+            colors::print_substatus("Downloading source: " + (custom_name.empty() ? raw_url : custom_name));
+            std::string output_flag = custom_name.empty() ? "-O" : "-o '" + custom_name + "'";
+            cmd = "cd '" + work_dir + "' && /usr/bin/curl -L " + output_flag + " -s '" + raw_url + "'";
         }
 
+        // Ensure work_dir exists and is writable
+        if (!fs::exists(work_dir)) {
+            fs::create_directories(work_dir);
+        }
+        
+        // Debug: Log the command for troubleshooting if it fails
         int ret = system(cmd.c_str());
+
         if (ret != 0) {
+            if (WIFSIGNALED(ret)) {
+                colors::print_error("Download process killed by signal " + std::to_string(WTERMSIG(ret)));
+                if (WTERMSIG(ret) == 9) {
+                    colors::print_substatus("Tip: This often indicates macOS security software or SIP restriction.");
+                }
+            }
             colors::print_error("Failed to download or clone: " + raw_url);
             return false;
         }
@@ -514,12 +528,27 @@ bool AURBackend::compile_source(const PKGBUILDInfo& info, const std::string& wor
     }
 
     // Set up environment for macOS compilation
+    std::string extra_cflags, extra_ldflags, extra_pkgconfig, extra_libs;
+    std::vector<std::string> potential_kegs = {"e2fsprogs", "openssl", "icu4c", "libxml2", "libedit", "ncurses"};
+    for (const auto& keg : potential_kegs) {
+        std::string keg_path = brew_prefix + "/opt/" + keg;
+        if (fs::exists(keg_path)) {
+            extra_cflags += " -I" + keg_path + "/include";
+            extra_ldflags += " -L" + keg_path + "/lib";
+            extra_pkgconfig += ":" + keg_path + "/lib/pkgconfig";
+            if (keg == "e2fsprogs") {
+                extra_libs += " -lcom_err -lblkid -luuid";
+            }
+        }
+    }
+
     std::string env_setup = "export PATH=\"" + brew_prefix + "/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH\" && "
                            "export CC=clang CXX=clang++ "
-                           "CFLAGS='-O2 -I" + brew_prefix + "/include -I/usr/local/include' "
-                           "CXXFLAGS='-O2 -I" + brew_prefix + "/include -I/usr/local/include' "
-                           "LDFLAGS='-L" + brew_prefix + "/lib -L/usr/local/lib' "
-                           "PKG_CONFIG_PATH='" + brew_prefix + "/lib/pkgconfig:" + brew_prefix + "/share/pkgconfig:/usr/local/lib/pkgconfig' "
+                           "CFLAGS='-O2 -I" + brew_prefix + "/include -I/usr/local/include" + extra_cflags + "' "
+                           "CXXFLAGS='-O2 -I" + brew_prefix + "/include -I/usr/local/include" + extra_cflags + "' "
+                           "LDFLAGS='-L" + brew_prefix + "/lib -L/usr/local/lib" + extra_ldflags + "' "
+                           "LIBS='" + extra_libs + "' "
+                           "PKG_CONFIG_PATH='" + brew_prefix + "/lib/pkgconfig:" + brew_prefix + "/share/pkgconfig:/usr/local/lib/pkgconfig" + extra_pkgconfig + "' "
                            "EXPAT_LIBPATH='/usr/lib' "
                            "PREFIX='" + install_prefix + "' && ";
 
@@ -552,19 +581,37 @@ export PKG_CONFIG_EXECUTABLE=")BASH" + brew_prefix + R"BASH(/bin/pkg-config"
 install() {
     local args=()
     local create_dirs=false
-    for arg in "$@"; do
-        if [[ "$arg" == "-D" ]]; then
-            create_dirs=true
-        elif [[ "$arg" == "--mode" ]]; then
-            args+=("-m")
-        elif [[ "$arg" == "-t" ]]; then
-            args+=("-d")
-        else
-            args+=("$arg")
-        fi
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -D*)
+                create_dirs=true
+                if [[ "$1" != "-D" ]]; then
+                    # Handle combined like -Dm755
+                    local rest="${1#-D}"
+                    if [[ -n "$rest" ]]; then
+                        set -- "-$rest" "${@:2}"
+                        continue
+                    fi
+                fi
+                ;;
+            --mode)
+                args+=("-m")
+                ;;
+            -t)
+                args+=("-d")
+                ;;
+            -*)
+                args+=("$1")
+                ;;
+            *)
+                args+=("$1")
+                ;;
+        esac
+        shift
     done
     if $create_dirs; then
-        local target="${args[-1]}"
+        local cnt=${#args[@]}
+        local target="${args[$(( cnt - 1 ))]}"
         command mkdir -p "$(dirname "$target")"
     fi
     /usr/bin/install "${args[@]}"
@@ -646,7 +693,8 @@ readlink() {
         fi
     done
     if $do_canonical; then
-        python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "${args[-1]}" 2>/dev/null || command readlink "${args[@]}"
+        local cnt=${#args[@]}
+        python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "${args[$(( cnt - 1 ))]}" 2>/dev/null || command readlink "${args[@]}"
     else
         command readlink "${args[@]}"
     fi
@@ -678,6 +726,22 @@ source ")BASH" + build_dir_ + "/" + info.pkgname + "/PKGBUILD" + R"BASH("
 # Override variables that makepkg normally injects
 export pkgname=")BASH" + info.pkgname + R"BASH("
 export pkgver=")BASH" + info.pkgver + R"BASH("
+
+# ── Automatic Extraction ─────────────────────────────────────────────────────
+cd "$srcdir"
+for s in "${source[@]}"; do
+    filename=$(echo "$s" | sed 's/::.*//')
+    filename=$(basename "$filename")
+    file_path="$srcdir/$filename"
+    if [[ -f "$file_path" ]]; then
+        case "$file_path" in
+            *.tar.gz|*.tgz) tar -xzf "$file_path" -C "$srcdir" ;;
+            *.tar.bz2|*.tbz2) tar -xjf "$file_path" -C "$srcdir" ;;
+            *.tar.xz|*.txz) tar -xJf "$file_path" -C "$srcdir" ;;
+            *.zip) unzip -q -o "$file_path" -d "$srcdir" ;;
+        esac
+    fi
+done
 
 cd "$srcdir"
 

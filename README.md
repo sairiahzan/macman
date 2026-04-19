@@ -20,7 +20,11 @@ Whether you need pre-compiled macOS binaries or want to natively compile Linux-o
 ## 🔥 Why Macman? (Killer Features)
 
 - ⚡️ **Blazing Fast Concurrent Execution**: Powered by `std::async`, Macman searches and resolves multiple packages concurrently across Homebrew and AUR APIs. What used to take seconds now takes milliseconds. Unapologetically optimized for M-Series Silicon.
-- 🛠️ **Self-Healing Build Engine**: Compiling AUR packages on a Mac shouldn't be a nightmare. When a build fails due to Darwin-specific API errors, missing headers, or incompatible linker flags, Macman's intelligent **Self-Healing Motor** analyzes the error, auto-patches the C/C++ source code on the fly, and restarts the build.
+- 🛠️ **Self-Healing Build Engine (SHE)**: Compiling AUR packages on a Mac shouldn't be a nightmare. Macman's intelligent **SHE Motor** now includes:
+    - **Automatic Archive Extraction**: Deeply handles `.tar.gz`, `.tar.bz2`, `.tar.xz`, and `.zip` sources automatically, restoring true `makepkg` behavior to macOS.
+    - **Intelligent Keg-only Linking**: Automatically detects and injects include/library paths for "keg-only" Homebrew dependencies (like `e2fsprogs`, `openssl`, `icu4c`), solving "header not found" errors before they even happen.
+    - **C++ Narrowing Correction**: Detects modern C++11 narrowing conversion errors in legacy code and applies `-Wno-narrowing` patches on the fly.
+    - **Darwin API Auto-Patching**: Analyzes build failures due to Linux-specific APIs and auto-stubs or redirects calls to macOS-native equivalents.
 - 📦 **Dual Backend Architecture**: Fetches macOS native binaries from Homebrew effortlessly, while also compiling Arch Linux packages from the AUR.
 - 🛡️ **User-Space & SIP Friendly**: By default, Macman isolates your environment by installing to `~/.macman`. No more polluting `/usr/local/` or fighting Apple's System Integrity Protection (SIP).
 - ☢️ **The Nuke Option**: Want a completely fresh start? A single `macman --nuke` command completely obliterates all installed packages and caches, leaving zeroes and ones as if the system was factory-new.
