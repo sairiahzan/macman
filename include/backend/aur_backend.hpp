@@ -12,6 +12,7 @@
 #pragma once
 
 #include "../core/package.hpp"
+#include "../core/self_healing.hpp"
 #include "../net/http_client.hpp"
 #include <string>
 #include <vector>
@@ -44,15 +45,6 @@ enum class CompatLevel {
     LINUX_ONLY      // ❌ Hard Linux requirement — red warning + ask Y/n
 };
 
-// --- Build Error Pattern for Self-Healing ---
-
-struct BuildError {
-    std::string pattern;        // Regex or substring to match in build log
-    std::string description;    // Human-readable explanation
-    std::string fix_type;       // "header_stub", "define", "typedef", "ldflag_remove", "env_set"
-    std::string fix_value;      // The actual fix content
-};
-
 // --- AUR Backend Class ---
 
 class AURBackend {
@@ -69,7 +61,7 @@ public:
     std::optional<Package> get_info(const std::string& name);
 
     // --- Build from Source ---
-    
+
     bool build_and_install(const std::string& name, const std::string& install_prefix,
                            std::vector<std::string>& installed_files);
 
@@ -85,10 +77,12 @@ public:
 private:
     HttpClient http_;
     std::string build_dir_;
+    SelfHealingEngine healing_engine_;
 
     // --- Result Cache (TTL-based) ---
 
     static constexpr int CACHE_TTL_SECONDS = 300;  // 5 minutes
+    static constexpr int MAX_BUILD_RETRIES = 5;
 
     struct CachedPackage {
         Package pkg;
@@ -104,29 +98,18 @@ private:
 
     bool is_cache_valid(time_t timestamp) const;
 
-    // --- Self-Healing Build Engine ---
-
-    static constexpr int MAX_BUILD_RETRIES = 3;
-
-    std::vector<BuildError> get_known_fixes() const;
-    bool analyze_and_fix_build(const std::string& build_log,
-                               const std::string& work_dir,
-                               const std::string& src_dir,
-                               std::string& env_setup);
-    int run_build_capturing_output(const std::string& cmd, std::string& output);
-
     // --- Internal Helpers ---
 
     std::optional<PKGBUILDInfo> download_pkgbuild(const std::string& name);
     PKGBUILDInfo parse_pkgbuild(const std::string& pkgbuild_path) const;
-    
+
     bool download_sources(const PKGBUILDInfo& info, const std::string& work_dir);
     bool compile_source(const PKGBUILDInfo& info, const std::string& work_dir,
                         const std::string& install_prefix,
                         std::vector<std::string>& installed_files);
-    
+
     std::vector<std::string> collect_installed_files(const std::string& prefix) const;
-    
+
     Package aur_json_to_package(const nlohmann::json& result) const;
 };
 

@@ -1,4 +1,10 @@
-// installer.cpp [V1.1.0 Patch]
+// installer.cpp [V1.2.0 Patch]
+// Self-Healing Compilation Engine added in V1.2.0:
+//   run_capturing_output  — posix_spawn stderr capture
+//   analyze_and_fix_compile_errors — regex-driven Darwin patch engine
+//   patch_build_flags     — Makefile/CMake flag surgery
+//   patch_cmake_remove_required — strips REQUIRED from find_package
+//   build_with_healing    — retry loop with progressive fix accumulation
 
 #include "core/installer.hpp"
 #include "backend/homebrew_backend.hpp"
@@ -7,9 +13,27 @@
 #include "macman.hpp"
 #include "cli/colors.hpp"
 #include <iostream>
+#include <fstream>
+#include <sstream>
 #include <filesystem>
 #include <cstdlib>
 #include <vector>
+#include <map>
+#include <set>
+#include <regex>
+#include <algorithm>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+#ifdef __APPLE__
+#  include <crt_externs.h>
+#  define MACMAN_ENVIRON (*_NSGetEnviron())
+#else
+extern char** environ;
+#  define MACMAN_ENVIRON environ
+#endif
 
 namespace fs = std::filesystem;
 
@@ -88,8 +112,36 @@ bool Installer::atomic_commit(const std::string& stage_dir, const std::string& f
             auto rel_path = fs::relative(entry.path(), stage_dir);
             auto target_path = fs::path(final_dir) / rel_path;
 
-            fs::create_directories(target_path.parent_path());
-            
+            // Skip symlinks that would be self-referential after placement (e.g. share/terminfo → ../share/terminfo)
+            if (entry.is_symlink()) {
+                fs::path sym_target = fs::read_symlink(entry.path());
+                if (sym_target.is_relative()) {
+                    auto resolved = (target_path.parent_path() / sym_target).lexically_normal();
+                    if (resolved == target_path.lexically_normal()) continue;
+                }
+            }
+
+            {
+                std::error_code ec;
+                fs::create_directories(target_path.parent_path(), ec);
+                if (ec == std::errc::too_many_symbolic_link_levels) {
+                    // Find the circular symlink component and replace it with a real dir
+                    fs::path cur;
+                    for (const auto& part : target_path.parent_path()) {
+                        cur /= part;
+                        std::error_code ec2;
+                        fs::status(cur, ec2);
+                        if (ec2 == std::errc::too_many_symbolic_link_levels) {
+                            fs::remove(cur, ec2);
+                            fs::create_directory(cur, ec2);
+                            break;
+                        }
+                    }
+                    fs::create_directories(target_path.parent_path(), ec);
+                }
+                if (ec) continue;
+            }
+
             // Overwrite existing without resolving symlink targets
             std::error_code ec;
             if (fs::exists(fs::symlink_status(target_path))) {
@@ -191,6 +243,604 @@ bool Installer::install_package(const Package& pkg, const std::string& reason) {
         return true;
     }
     return false;
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Self-Healing Compilation Engine
+// ─────────────────────────────────────────────────────────────────────────────
+
+int Installer::run_capturing_output(const std::string& cmd, std::string& output) const {
+    output.clear();
+    std::string log_path = get_cache_dir() + "/compile_heal.log";
+
+    posix_spawn_file_actions_t fa;
+    posix_spawn_file_actions_init(&fa);
+    posix_spawn_file_actions_addopen(&fa, STDOUT_FILENO, log_path.c_str(),
+                                     O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    posix_spawn_file_actions_adddup2(&fa, STDOUT_FILENO, STDERR_FILENO);
+
+    pid_t pid;
+    const char* argv[] = {"sh", "-c", cmd.c_str(), nullptr};
+    int status = posix_spawn(&pid, "/bin/sh", &fa, nullptr,
+                              (char* const*)argv, MACMAN_ENVIRON);
+    posix_spawn_file_actions_destroy(&fa);
+
+    if (status == 0) {
+        int ws;
+        waitpid(pid, &ws, 0);
+        status = WIFEXITED(ws) ? WEXITSTATUS(ws) : -1;
+    } else {
+        status = -1;
+    }
+
+    try {
+        std::ifstream f(log_path);
+        if (f.is_open())
+            output.assign(std::istreambuf_iterator<char>(f),
+                          std::istreambuf_iterator<char>());
+    } catch (...) {}
+
+    return status;
+}
+
+// Removes/replaces old_flag in every Makefile, CMakeLists.txt, .mk,
+// configure, and meson.build under src_dir.
+void Installer::patch_build_flags(const std::string& src_dir,
+                                   const std::string& old_flag,
+                                   const std::string& new_flag) const {
+    static const std::vector<std::string> targets = {
+        "Makefile", "CMakeLists.txt", "configure", "meson.build"
+    };
+
+    try {
+        for (const auto& entry : fs::recursive_directory_iterator(src_dir)) {
+            if (!entry.is_regular_file()) continue;
+            std::string fname = entry.path().filename().string();
+            bool is_target = false;
+            for (const auto& t : targets) {
+                if (fname == t || fname.rfind(".mk") == fname.size() - 3) {
+                    is_target = true; break;
+                }
+            }
+            if (!is_target) continue;
+
+            std::string content;
+            {
+                std::ifstream f(entry.path());
+                content.assign(std::istreambuf_iterator<char>(f),
+                               std::istreambuf_iterator<char>());
+            }
+            if (content.find(old_flag) == std::string::npos) continue;
+
+            size_t pos;
+            while ((pos = content.find(old_flag)) != std::string::npos)
+                content.replace(pos, old_flag.size(), new_flag);
+
+            std::ofstream f(entry.path());
+            f << content;
+        }
+    } catch (...) {}
+}
+
+// Strips REQUIRED from find_package/find_program calls for pkg_name,
+// and comments out lines that would be fatal_error for that package.
+void Installer::patch_cmake_remove_required(const std::string& src_dir,
+                                             const std::string& pkg_name) const {
+    std::string lower_pkg = pkg_name;
+    std::transform(lower_pkg.begin(), lower_pkg.end(), lower_pkg.begin(), ::tolower);
+
+    try {
+        for (const auto& entry : fs::recursive_directory_iterator(src_dir)) {
+            if (!entry.is_regular_file()) continue;
+            std::string fname = entry.path().filename().string();
+            bool is_cmake = (fname == "CMakeLists.txt" ||
+                             (fname.size() > 6 &&
+                              fname.substr(fname.size() - 6) == ".cmake"));
+            if (!is_cmake) continue;
+
+            std::string content;
+            {
+                std::ifstream f(entry.path());
+                content.assign(std::istreambuf_iterator<char>(f),
+                               std::istreambuf_iterator<char>());
+            }
+
+            std::string lower_content = content;
+            std::transform(lower_content.begin(), lower_content.end(),
+                           lower_content.begin(), ::tolower);
+            if (lower_content.find(lower_pkg) == std::string::npos) continue;
+
+            std::istringstream ss(content);
+            std::string new_content;
+            std::string line;
+            bool modified = false;
+
+            while (std::getline(ss, line)) {
+                std::string ll = line;
+                std::transform(ll.begin(), ll.end(), ll.begin(), ::tolower);
+
+                bool mentions_pkg = ll.find(lower_pkg) != std::string::npos;
+
+                if (mentions_pkg && ll.find("fatal_error") != std::string::npos) {
+                    new_content += "# [macman patched] " + line + "\n";
+                    modified = true;
+                    continue;
+                }
+
+                if (mentions_pkg &&
+                    (ll.find("find_package") != std::string::npos ||
+                     ll.find("find_program") != std::string::npos)) {
+                    // Remove REQUIRED keyword
+                    size_t rpos = line.find("REQUIRED");
+                    if (rpos != std::string::npos) {
+                        line.erase(rpos, 8);
+                        modified = true;
+                    }
+                }
+
+                new_content += line + "\n";
+            }
+
+            if (modified) {
+                std::ofstream f(entry.path());
+                f << new_content;
+            }
+        }
+    } catch (...) {}
+}
+
+bool Installer::analyze_and_fix_compile_errors(const std::string& log,
+                                                const std::string& src_dir,
+                                                const std::string& compat_dir,
+                                                std::string& extra_cflags) const {
+    bool any_fix = false;
+
+    // ── Load / init compat header ────────────────────────────────────────────
+    std::string compat_h = compat_dir + "/macman_compat.h";
+    std::string compat_content;
+    if (fs::exists(compat_h)) {
+        std::ifstream f(compat_h);
+        compat_content.assign(std::istreambuf_iterator<char>(f),
+                              std::istreambuf_iterator<char>());
+    } else {
+        compat_content = "#pragma once\n/* macman Darwin self-healing compat header */\n\n";
+    }
+
+    // Appends code only if it hasn't been added yet (fingerprint = first 32 chars).
+    auto append_if_new = [&](const std::string& code) -> bool {
+        std::string fp = code.substr(0, std::min((size_t)32, code.size()));
+        if (compat_content.find(fp) != std::string::npos) return false;
+        compat_content += code + "\n\n";
+        return true;
+    };
+
+    // ── [1] Missing headers ──────────────────────────────────────────────────
+    // Clang: fatal error: 'X' file not found
+    // GCC:   fatal error: X: No such file or directory
+    {
+        std::regex re1(R"(fatal error: '([^']+\.h(?:pp)?)' file not found)");
+        std::regex re2(R"(fatal error: ([^\s:]+\.h(?:pp)?): No such file or directory)");
+
+        std::set<std::string> missing;
+        for (auto& re : {re1, re2})
+            for (std::sregex_iterator it(log.begin(), log.end(), re);
+                 it != std::sregex_iterator{}; ++it)
+                missing.insert((*it)[1].str());
+
+        // Darwin-specific header remappings: map Linux header → Darwin snippet
+        static const std::map<std::string, std::string> hdr_fixes = {
+            {"malloc.h",
+             "#ifdef __APPLE__\n"
+             "#include <malloc/malloc.h>\n"
+             "#define malloc_usable_size(p) malloc_size(p)\n"
+             "#endif"},
+            {"endian.h",
+             "#ifdef __APPLE__\n"
+             "#include <machine/endian.h>\n"
+             "#ifndef __BYTE_ORDER\n"
+             "#  define __BYTE_ORDER    BYTE_ORDER\n"
+             "#  define __BIG_ENDIAN    BIG_ENDIAN\n"
+             "#  define __LITTLE_ENDIAN LITTLE_ENDIAN\n"
+             "#  define __PDP_ENDIAN    PDP_ENDIAN\n"
+             "#endif\n"
+             "#endif"},
+            {"byteswap.h",
+             "#ifdef __APPLE__\n"
+             "#ifndef bswap_16\n"
+             "#  define bswap_16(x) __builtin_bswap16(x)\n"
+             "#  define bswap_32(x) __builtin_bswap32(x)\n"
+             "#  define bswap_64(x) __builtin_bswap64(x)\n"
+             "#endif\n"
+             "#endif"},
+            {"pty.h",
+             "#ifdef __APPLE__\n"
+             "#include <util.h>\n"
+             "#endif"},
+            {"bsd/string.h",
+             "#ifdef __APPLE__\n"
+             "#include <string.h>\n"
+             "#endif"},
+            {"error.h",
+             "#ifdef __APPLE__\n"
+             "#include <stdio.h>\n"
+             "#include <stdlib.h>\n"
+             "#include <string.h>\n"
+             "#include <errno.h>\n"
+             "#include <stdarg.h>\n"
+             "static inline void error(int status, int errnum,\n"
+             "                         const char* fmt, ...) {\n"
+             "    va_list ap; va_start(ap, fmt);\n"
+             "    vfprintf(stderr, fmt, ap);\n"
+             "    va_end(ap);\n"
+             "    if (errnum) fprintf(stderr, \": %s\", strerror(errnum));\n"
+             "    fputc('\\n', stderr);\n"
+             "    if (status) exit(status);\n"
+             "}\n"
+             "#endif"},
+            {"sys/random.h",
+             "#ifdef __APPLE__\n"
+             "#include <sys/types.h>\n"
+             "extern int getentropy(void* buf, size_t len); /* available since macOS 10.12 */\n"
+             "static inline ssize_t getrandom(void* buf, size_t n, unsigned f) {\n"
+             "    (void)f;\n"
+             "    return getentropy(buf, n) == 0 ? (ssize_t)n : -1;\n"
+             "}\n"
+             "#endif"},
+            {"threads.h",
+             "#ifdef __APPLE__\n"
+             "#include <pthread.h>\n"
+             "#include <stdint.h>\n"
+             "typedef pthread_t thrd_t;\n"
+             "typedef int (*thrd_start_t)(void*);\n"
+             "typedef pthread_mutex_t mtx_t;\n"
+             "#define thrd_success 0\n"
+             "#define thrd_error   1\n"
+             "#define mtx_plain    0\n"
+             "static inline int thrd_create(thrd_t* t, thrd_start_t f, void* a) {\n"
+             "    return pthread_create(t,NULL,(void*(*)(void*))f,a) ? thrd_error : thrd_success;\n"
+             "}\n"
+             "static inline int thrd_join(thrd_t t, int* r) {\n"
+             "    void* v; pthread_join(t, &v);\n"
+             "    if (r) *r = (int)(intptr_t)v; return thrd_success;\n"
+             "}\n"
+             "static inline int mtx_init(mtx_t* m, int tp) {\n"
+             "    (void)tp; return pthread_mutex_init(m,NULL) ? thrd_error : thrd_success;\n"
+             "}\n"
+             "static inline int mtx_lock(mtx_t* m)   { return pthread_mutex_lock(m)   ? thrd_error : thrd_success; }\n"
+             "static inline int mtx_unlock(mtx_t* m) { return pthread_mutex_unlock(m) ? thrd_error : thrd_success; }\n"
+             "static inline void mtx_destroy(mtx_t* m) { pthread_mutex_destroy(m); }\n"
+             "#endif"},
+            {"sys/sysinfo.h",
+             "#ifdef __APPLE__\n"
+             "#include <sys/types.h>\n"
+             "#include <sys/sysctl.h>\n"
+             "struct sysinfo {\n"
+             "    long uptime; unsigned long loads[3];\n"
+             "    unsigned long totalram, freeram, sharedram, bufferram;\n"
+             "    unsigned long totalswap, freeswap;\n"
+             "    unsigned short procs; unsigned long totalhigh, freehigh;\n"
+             "    unsigned int mem_unit;\n"
+             "};\n"
+             "static inline int sysinfo(struct sysinfo* s) {\n"
+             "    if (!s) return -1;\n"
+             "    *s = (struct sysinfo){};\n"
+             "    size_t sz = sizeof(s->totalram);\n"
+             "    sysctlbyname(\"hw.memsize\", &s->totalram, &sz, NULL, 0);\n"
+             "    s->mem_unit = 1; return 0;\n"
+             "}\n"
+             "#endif"},
+        };
+
+        for (const auto& hdr : missing) {
+            auto it = hdr_fixes.find(hdr);
+            if (it != hdr_fixes.end()) {
+                colors::print_substatus("Self-healing: remapping <" + hdr + "> → Darwin equivalent");
+                if (append_if_new(it->second)) any_fix = true;
+            } else {
+                // Generic stub: covers linux/*, sys/epoll.h, sys/inotify.h, …
+                fs::path stub = fs::path(compat_dir) / hdr;
+                fs::create_directories(stub.parent_path());
+                if (!fs::exists(stub)) {
+                    std::ofstream sf(stub.string());
+                    sf << "/* macman auto-stub: <" << hdr
+                       << "> not available on Darwin */\n";
+                    colors::print_substatus("Self-healing: stub created for <" + hdr + ">");
+                    any_fix = true;
+                }
+            }
+        }
+    }
+
+    // ── [2] Undeclared identifiers / missing symbols ─────────────────────────
+    {
+        std::regex re(R"((?:use of undeclared identifier|undeclared identifier|implicit declaration of function) '([^']+)')");
+        std::set<std::string> syms;
+        for (std::sregex_iterator it(log.begin(), log.end(), re);
+             it != std::sregex_iterator{}; ++it)
+            syms.insert((*it)[1].str());
+
+        static const std::map<std::string, std::string> sym_fixes = {
+            {"MSG_NOSIGNAL",
+             "#ifndef MSG_NOSIGNAL\n#define MSG_NOSIGNAL 0\n#endif"},
+            {"O_TMPFILE",
+             "#ifndef O_TMPFILE\n#define O_TMPFILE 0\n#endif"},
+            {"CLOCK_MONOTONIC_RAW",
+             "#ifndef CLOCK_MONOTONIC_RAW\n#define CLOCK_MONOTONIC_RAW CLOCK_MONOTONIC\n#endif"},
+            {"CLOCK_BOOTTIME",
+             "#ifndef CLOCK_BOOTTIME\n#define CLOCK_BOOTTIME CLOCK_MONOTONIC\n#endif"},
+            {"CLOCK_REALTIME_COARSE",
+             "#ifndef CLOCK_REALTIME_COARSE\n#define CLOCK_REALTIME_COARSE CLOCK_REALTIME\n#endif"},
+            {"CLOCK_MONOTONIC_COARSE",
+             "#ifndef CLOCK_MONOTONIC_COARSE\n#define CLOCK_MONOTONIC_COARSE CLOCK_MONOTONIC\n#endif"},
+            {"pipe2",
+             "#ifdef __APPLE__\n"
+             "static inline int pipe2(int fd[2], int flags) { (void)flags; return pipe(fd); }\n"
+             "#endif"},
+            {"accept4",
+             "#ifdef __APPLE__\n"
+             "#include <sys/socket.h>\n"
+             "static inline int accept4(int s, struct sockaddr* a,\n"
+             "                          socklen_t* l, int f) {\n"
+             "    (void)f; return accept(s, a, l);\n"
+             "}\n"
+             "#endif"},
+            {"getauxval",
+             "#ifndef getauxval\n"
+             "static inline unsigned long getauxval(unsigned long t) { (void)t; return 0; }\n"
+             "#endif"},
+            {"TEMP_FAILURE_RETRY",
+             "#ifndef TEMP_FAILURE_RETRY\n"
+             "#include <errno.h>\n"
+             "#define TEMP_FAILURE_RETRY(e) \\\n"
+             "    ({ __typeof__(e) _r; do { _r=(e); } while (_r==-1 && errno==EINTR); _r; })\n"
+             "#endif"},
+            {"malloc_usable_size",
+             "#ifdef __APPLE__\n"
+             "#include <malloc/malloc.h>\n"
+             "#define malloc_usable_size(p) malloc_size(p)\n"
+             "#endif"},
+            {"__pid_t",
+             "#ifdef __APPLE__\n"
+             "#ifndef __pid_t\ntypedef pid_t __pid_t;\n#endif\n"
+             "#endif"},
+            {"memrchr",
+             "#ifdef __APPLE__\n"
+             "#include <stddef.h>\n"
+             "static inline void* memrchr(const void* s, int c, size_t n) {\n"
+             "    const unsigned char* p = (const unsigned char*)s + n;\n"
+             "    while (n--) if (*--p == (unsigned char)c) return (void*)p;\n"
+             "    return 0;\n"
+             "}\n"
+             "#endif"},
+            {"strchrnul",
+             "#ifdef __APPLE__\n"
+             "static inline char* strchrnul(const char* s, int c) {\n"
+             "    while (*s && *s != (char)c) ++s; return (char*)s;\n"
+             "}\n"
+             "#endif"},
+            {"strdupa",
+             "#ifdef __APPLE__\n"
+             "#include <alloca.h>\n"
+             "#include <string.h>\n"
+             "#define strdupa(s) \\\n"
+             "    ({ size_t _n=strlen(s)+1; char* _d=(char*)alloca(_n); memcpy(_d,s,_n); _d; })\n"
+             "#endif"},
+            {"fallocate",
+             "#ifdef __APPLE__\n"
+             "#include <unistd.h>\n"
+             "static inline int fallocate(int fd, int m, off_t o, off_t l) {\n"
+             "    (void)m; return ftruncate(fd, o + l);\n"
+             "}\n"
+             "#endif"},
+            {"getrandom",
+             "#ifdef __APPLE__\n"
+             "#include <sys/types.h>\n"
+             "extern int getentropy(void* buf, size_t len);\n"
+             "static inline ssize_t getrandom(void* buf, size_t n, unsigned f) {\n"
+             "    (void)f; return getentropy(buf, n) == 0 ? (ssize_t)n : -1;\n"
+             "}\n"
+             "#endif"},
+            {"explicit_bzero",
+             "#ifdef __APPLE__\n"
+             "#include <strings.h>\n"
+             "#ifndef explicit_bzero\n"
+             "static inline void explicit_bzero(void* p, size_t n) { memset(p, 0, n); }\n"
+             "#endif\n"
+             "#endif"},
+            {"reallocarray",
+             "#ifdef __APPLE__\n"
+             "#include <stdlib.h>\n"
+             "#ifndef reallocarray\n"
+             "static inline void* reallocarray(void* p, size_t nm, size_t sz) {\n"
+             "    return realloc(p, nm * sz);\n"
+             "}\n"
+             "#endif\n"
+             "#endif"},
+            {"strlcpy",
+             "/* strlcpy is already in macOS libc — no action needed */"},
+            {"strlcat",
+             "/* strlcat is already in macOS libc — no action needed */"},
+        };
+
+        for (const auto& sym : syms) {
+            auto it = sym_fixes.find(sym);
+            if (it != sym_fixes.end()) {
+                colors::print_substatus("Self-healing: patching undefined symbol '" + sym + "'");
+                if (append_if_new(it->second)) any_fix = true;
+            }
+        }
+    }
+
+    // ── [3] Linker: library not found ────────────────────────────────────────
+    {
+        // macOS ld: "library not found for -lFOO"
+        std::regex re(R"(library not found for -l(\S+))");
+        static const std::set<std::string> noop_libs = {
+            "rt", "dl", "pthread", "resolv", "atomic", "m" /* libm is in libSystem */
+        };
+
+        std::set<std::string> seen;
+        for (std::sregex_iterator it(log.begin(), log.end(), re);
+             it != std::sregex_iterator{}; ++it) {
+            std::string lib = (*it)[1].str();
+            if (!seen.insert(lib).second) continue;
+            if (noop_libs.count(lib)) {
+                colors::print_substatus("Self-healing: removing unsupported linker flag -l" + lib);
+                patch_build_flags(src_dir, "-l" + lib, "");
+                any_fix = true;
+            }
+        }
+    }
+
+    // ── [4] GNU ld options not supported by Apple ld ─────────────────────────
+    {
+        static const std::vector<std::string> gnu_ld_opts = {
+            "-Wl,--as-needed",       "-Wl,--no-as-needed",
+            "-Wl,--no-undefined",    "-Wl,--allow-shlib-undefined",
+            "-Wl,-z,relro",          "-Wl,-z,now",
+            "-Wl,--gc-sections",     "-Wl,-export-dynamic",
+            "-Wl,--version-script",
+        };
+        for (const auto& opt : gnu_ld_opts) {
+            // Apple ld prints "unknown option: --X" — check inner option name
+            std::string inner = opt.size() > 4 ? opt.substr(4) : opt;
+            if (log.find("unknown option") != std::string::npos &&
+                log.find(inner)            != std::string::npos) {
+                colors::print_substatus("Self-healing: removing GNU ld flag " + opt);
+                patch_build_flags(src_dir, opt, "");
+                any_fix = true;
+            }
+        }
+    }
+
+    // ── [5] Unknown compiler flags ────────────────────────────────────────────
+    {
+        // clang: "unknown warning option '-Wfoo'"
+        // clang: "error: unknown argument: '-ffoo'"
+        // clang: "unsupported option '-ffoo'"
+        std::regex re_warn  (R"(unknown warning option '(-[^']+)')");
+        std::regex re_arg   (R"(error: unknown argument: '(-[^']+)')");
+        std::regex re_unsup (R"(unsupported option '(-[^']+)')");
+
+        std::set<std::string> bad_flags;
+        for (auto& re : {re_warn, re_arg, re_unsup})
+            for (std::sregex_iterator it(log.begin(), log.end(), re);
+                 it != std::sregex_iterator{}; ++it)
+                bad_flags.insert((*it)[1].str());
+
+        for (const auto& flag : bad_flags) {
+            colors::print_substatus("Self-healing: removing unsupported flag " + flag);
+            patch_build_flags(src_dir, flag, "");
+            any_fix = true;
+        }
+    }
+
+    // ── [6] CMake "Could NOT find <Package>" ─────────────────────────────────
+    {
+        std::regex re(R"(Could NOT find (\w[\w\-\.]+))");
+        std::set<std::string> missing_pkgs;
+        for (std::sregex_iterator it(log.begin(), log.end(), re);
+             it != std::sregex_iterator{}; ++it)
+            missing_pkgs.insert((*it)[1].str());
+
+        for (const auto& pkg : missing_pkgs) {
+            colors::print_substatus("Self-healing: relaxing CMake REQUIRED for " + pkg);
+            patch_cmake_remove_required(src_dir, pkg);
+            any_fix = true;
+        }
+    }
+
+    // ── [7] CMake: missing executable (sphinx, doxygen, …) ───────────────────
+    {
+        std::regex re(R"((?:sphinx-build|doxygen)[^'"\n]*(?:not found|NOTFOUND))");
+        if (std::regex_search(log, re)) {
+            patch_cmake_remove_required(src_dir, "Sphinx");
+            patch_cmake_remove_required(src_dir, "Doxygen");
+            any_fix = true;
+        }
+    }
+
+    // ── [8] Write compat header & inject -include into extra_cflags ──────────
+    if (any_fix) {
+        {
+            std::ofstream f(compat_h);
+            f << compat_content;
+        }
+        std::string inject = " -I'" + compat_dir + "' -include '" + compat_h + "'";
+        if (extra_cflags.find(compat_dir) == std::string::npos)
+            extra_cflags += inject;
+    }
+
+    return any_fix;
+}
+
+bool Installer::build_with_healing(const std::string& base_cmd,
+                                    const std::string& src_dir,
+                                    int max_retries) const {
+    std::string compat_dir = src_dir + "/.macman_compat";
+    fs::create_directories(compat_dir);
+
+    std::string brew_prefix =
+        fs::exists("/opt/homebrew/bin") ? "/opt/homebrew" : "/usr/local";
+
+    std::string extra_cflags;   // grows with each fix round
+    std::string build_output;
+    int ret = -1;
+
+    for (int attempt = 0; attempt < max_retries; ++attempt) {
+        if (attempt == 0) {
+            colors::print_substatus("Self-healing engine: compiling with macOS native toolchain...");
+        } else {
+            colors::print_substatus("Self-healing retry " + std::to_string(attempt) +
+                                    "/" + std::to_string(max_retries - 1) +
+                                    ": recompiling with applied fixes...");
+        }
+
+        // Re-compose the full command on every attempt so accumulated
+        // extra_cflags (−I/−include) are picked up by the compiler.
+        std::string cmd =
+            "export CC=clang CXX=clang++ && "
+            "export CFLAGS='-O2 -I" + brew_prefix + "/include" + extra_cflags + "' && "
+            "export CXXFLAGS='-O2 -std=c++17 -I" + brew_prefix + "/include" + extra_cflags + "' && "
+            "export LDFLAGS='-L" + brew_prefix + "/lib' && "
+            "export PKG_CONFIG_PATH='" + brew_prefix + "/lib/pkgconfig:"
+                                       + brew_prefix + "/share/pkgconfig' && "
+            + base_cmd;
+
+        ret = run_capturing_output(cmd, build_output);
+        if (ret == 0) break;
+
+        if (attempt < max_retries - 1) {
+            colors::print_warning("Build failed (exit " + std::to_string(ret) +
+                                  "). Analyzing compiler output...");
+            bool fixed = analyze_and_fix_compile_errors(
+                build_output, src_dir, compat_dir, extra_cflags);
+
+            if (!fixed) {
+                colors::print_error("No automatic fix could be applied.");
+                break;
+            }
+        }
+    }
+
+    if (ret != 0) {
+        colors::print_error("Build failed after " + std::to_string(max_retries) +
+                            " attempt(s). Last compiler output:");
+        std::istringstream ss(build_output);
+        std::vector<std::string> lines;
+        std::string ln;
+        while (std::getline(ss, ln)) lines.push_back(ln);
+        size_t start = lines.size() > 25 ? lines.size() - 25 : 0;
+        for (size_t i = start; i < lines.size(); ++i)
+            std::cerr << "  " << lines[i] << '\n';
+        return false;
+    }
+
+    if (fs::exists(compat_dir))
+        fs::remove_all(compat_dir);   // Clean up compat stubs on success
+
+    return true;
 }
 
 } // namespace macman

@@ -21,12 +21,7 @@
 #include <regex>
 #include <set>
 #include <cstdlib>
-#include <array>
 #include <iostream>
-#include <spawn.h>
-#include <sys/wait.h>
-#include <fcntl.h>
-#include <unistd.h>
 
 namespace fs = std::filesystem;
 
@@ -35,7 +30,8 @@ namespace macman {
 // --- Constructor ---
 
 AURBackend::AURBackend()
-    : build_dir_(get_cache_dir() + "/builds") {
+    : build_dir_(get_cache_dir() + "/builds"),
+      healing_engine_(build_dir_) {
     try {
         if (!fs::exists(build_dir_)) {
             fs::create_directories(build_dir_);
@@ -431,6 +427,12 @@ bool AURBackend::download_sources(const PKGBUILDInfo& info, const std::string& w
             raw_url = url.substr(url.find("::") + 2);
         }
 
+        // Replace $url with the package's URL if present
+        if (raw_url.find("$url") != std::string::npos) {
+            size_t p = raw_url.find("$url");
+            raw_url.replace(p, 4, info.url);
+        }
+
         std::string cmd;
         if (raw_url.find("git+") == 0 || raw_url.find("git://") == 0) {
             std::string git_url = raw_url;
@@ -459,614 +461,6 @@ bool AURBackend::download_sources(const PKGBUILDInfo& info, const std::string& w
     }
 
     return true;
-}
-
-// --- Known Build Error Fixes ---
-
-std::vector<BuildError> AURBackend::get_known_fixes() const {
-    return {
-        // Missing Linux-specific headers → create empty stubs
-        {"linux/", "Linux kernel header not found",
-         "header_stub", ""},
-        {"sys/sendfile.h", "Linux sendfile header not found",
-         "header_stub", "sys/sendfile.h"},
-        {"sys/inotify.h", "Linux inotify header not found",
-         "header_stub", "sys/inotify.h"},
-        {"sys/signalfd.h", "Linux signalfd header not found",
-         "header_stub", "sys/signalfd.h"},
-        {"sys/timerfd.h", "Linux timerfd header not found",
-         "header_stub", "sys/timerfd.h"},
-        {"sys/epoll.h", "Linux epoll header not found",
-         "header_stub", "sys/epoll.h"},
-        {"sys/prctl.h", "Linux prctl header not found",
-         "header_stub", "sys/prctl.h"},
-        {"malloc.h", "malloc.h is not used on macOS",
-         "header_stub", "malloc.h"},
-        {"endian.h", "endian.h not found, stubbing (handled by compat header)",
-         "header_stub", "endian.h"},
-        {"byteswap.h", "byteswap.h not found, stubbing (handled by compat header)",
-         "header_stub", "byteswap.h"},
-        {"pty.h", "pty.h not found, stubbing",
-         "header_stub", "pty.h"},
-
-        // Undeclared identifiers → add #define or typedef
-        {"MSG_NOSIGNAL", "MSG_NOSIGNAL not available on macOS",
-         "define", "#ifndef MSG_NOSIGNAL\n#define MSG_NOSIGNAL 0\n#endif"},
-        {"O_TMPFILE", "O_TMPFILE not available on macOS",
-         "define", "#ifndef O_TMPFILE\n#define O_TMPFILE 0\n#endif"},
-        {"__pid_t", "__pid_t not defined on macOS",
-         "define", "#ifndef __pid_t\ntypedef pid_t __pid_t;\n#endif"},
-        {"pipe2", "pipe2() not available on macOS",
-         "define", "#ifndef pipe2\n#define pipe2(fds, flags) pipe(fds)\n#endif"},
-        {"accept4", "accept4() not available on macOS",
-         "define", "#ifndef accept4\n#define accept4(fd, addr, len, flags) accept(fd, addr, len)\n#endif"},
-        {"getauxval", "getauxval() not available on macOS",
-         "define", "#ifndef getauxval\nstatic inline unsigned long getauxval(unsigned long t) { (void)t; return 0; }\n#endif"},
-        {"TEMP_FAILURE_RETRY", "TEMP_FAILURE_RETRY not available on macOS",
-         "define", "#ifndef TEMP_FAILURE_RETRY\n#define TEMP_FAILURE_RETRY(exp) ({ \\\n    __typeof__(exp) _rc; \\\n    do { \\\n        _rc = (exp); \\\n    } while (_rc == -1 && errno == EINTR); \\\n    _rc; \\\n})\n#endif"},
-        {"malloc_usable_size", "malloc_usable_size() not on macOS (use malloc_size)",
-         "define", "#ifdef __APPLE__\n#include <malloc/malloc.h>\n#define malloc_usable_size(p) malloc_size(p)\n#endif"},
-
-        // CMake missing tool/executable errors → patch CMakeLists.txt
-        {"sphinx-build' not found", "Disabling Sphinx documentation build",
-         "cmake_patch", "sphinx"},
-        {"sphinx-build: not found", "Disabling Sphinx documentation build",
-         "cmake_patch", "sphinx"},
-        {"Sphinx' not found", "Disabling Sphinx documentation build",
-         "cmake_patch", "sphinx"},
-        {"doxygen: not found", "Disabling Doxygen documentation build",
-         "cmake_patch", "doxygen"},
-        {"Doxygen' not found", "Disabling Doxygen documentation build",
-         "cmake_patch", "doxygen"},
-        {"Could NOT find ALSA", "Disabling ALSA (Linux-only audio)",
-         "cmake_patch", "alsa"},
-        {"Could NOT find LibNL", "Disabling libnl (Linux-only networking)",
-         "cmake_patch", "libnl"},
-        {"Could NOT find Libnl", "Disabling libnl (Linux-only networking)",
-         "cmake_patch", "libnl"},
-        {"i3ipc library not found", "Disabling i3wm IPC support",
-         "cmake_patch", "i3"},
-        {"Could NOT find PulseAudio", "Disabling PulseAudio (Linux-only)",
-         "cmake_patch", "pulseaudio"},
-
-        // Missing build tools → install via Homebrew
-        {"Could NOT find PkgConfig", "Installing pkg-config via Homebrew",
-         "tool_install", "pkg-config"},
-        {"PKG_CONFIG_EXECUTABLE", "Installing pkg-config via Homebrew",
-         "tool_install", "pkg-config"},
-        {"Could not find a package configuration file provided by \"Python", "Installing python3 via Homebrew",
-         "tool_install", "python3"},
-        {"Could NOT find Python", "Installing python3 via Homebrew",
-         "tool_install", "python3"},
-
-        // Unsupported compiler checks → patch cmake files
-        {"unsupported compiler", "Patching unsupported compiler check for AppleClang",
-         "cmake_patch", "unsupported"},
-        {"Unsupported compiler", "Patching unsupported compiler check for AppleClang",
-         "cmake_patch", "unsupported"},
-
-        // Linker errors → remove Linux-only libs
-        {"library not found for -lrt", "librt not needed on macOS",
-         "ldflag_remove", "-lrt"},
-        {"library not found for -ldl", "libdl not needed on macOS",
-         "ldflag_remove", "-ldl"},
-        {"library not found for -lpthread", "libpthread built-in on macOS",
-         "ldflag_remove", "-lpthread"},
-        {"unknown option: --as-needed", "GNU ld option not supported by macOS ld",
-         "ldflag_remove", "-Wl,--as-needed"},
-        {"unknown option: --no-as-needed", "GNU ld option not supported by macOS ld",
-         "ldflag_remove", "-Wl,--no-as-needed"},
-        {"unknown option: --no-undefined", "GNU ld option not supported by macOS ld",
-         "ldflag_remove", "-Wl,--no-undefined"},
-
-        // Compiler flag errors
-        {"-Werror=format-truncation", "GCC-specific warning flag",
-         "cflag_remove", "-Werror=format-truncation"},
-        {"-Wno-format-truncation", "GCC-specific warning flag",
-         "cflag_remove", "-Wno-format-truncation"},
-
-        // pkg-config missing packages → install via Homebrew
-        {"Package '" , "Auto-installing missing pkg-config dependency",
-         "pkg_not_found", ""},
-        {"required packages were not found", "Auto-installing missing pkg-config dependencies",
-         "pkg_not_found", ""},
-
-        // BSD ar empty archive (header-only libs on macOS)
-        {"no archive members specified", "Fixing empty static library for macOS BSD ar",
-         "empty_archive", ""},
-    };
-}
-
-// --- Run Build Command and Capture Output ---
-
-#ifdef __APPLE__
-#include <crt_externs.h>
-#define GET_ENVIRON (*_NSGetEnviron())
-#else
-extern char **environ;
-#define GET_ENVIRON environ
-#endif
-
-int AURBackend::run_build_capturing_output(const std::string& cmd, std::string& output) {
-    output.clear();
-    std::string log_file = build_dir_ + "/build_output.log";
-
-    // Setup file descriptor for posix_spawn output redirection
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-
-    // Open log_file for writing (O_WRONLY | O_CREAT | O_TRUNC), mode 0644
-    posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, log_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    
-    // Dup stderr to stdout
-    posix_spawn_file_actions_adddup2(&actions, STDOUT_FILENO, STDERR_FILENO);
-
-    pid_t pid;
-    const char* argv[] = {"sh", "-c", cmd.c_str(), nullptr};
-    
-    int status = posix_spawn(&pid, "/bin/sh", &actions, nullptr, (char* const*)argv, GET_ENVIRON);
-    posix_spawn_file_actions_destroy(&actions);
-
-    if (status == 0) {
-        int wait_status;
-        waitpid(pid, &wait_status, 0);
-        status = WIFEXITED(wait_status) ? WEXITSTATUS(wait_status) : -1;
-    } else {
-        status = -1; // spawn failed
-    }
-
-    // Read the log file back into the output string
-    try {
-        std::ifstream file(log_file);
-        if (file.is_open()) {
-            output = std::string((std::istreambuf_iterator<char>(file)),
-                                  std::istreambuf_iterator<char>());
-        }
-    } catch (...) {}
-
-    return status;
-}
-
-// --- Analyze Build Log and Apply Fixes ---
-
-bool AURBackend::analyze_and_fix_build(const std::string& build_log,
-                                        const std::string& work_dir,
-                                        const std::string& src_dir,
-                                        std::string& env_setup) {
-    auto known_fixes = get_known_fixes();
-    bool any_fix_applied = false;
-
-    // Create a compat header directory for stub headers
-    std::string compat_dir = work_dir + "/macman_compat";
-    fs::create_directories(compat_dir);
-
-    // Path for our macman compat header that gets force-included
-    std::string compat_header = compat_dir + "/macman_compat.h";
-    
-    // Read existing compat header if it exists
-    std::string compat_content;
-    if (fs::exists(compat_header)) {
-        std::ifstream existing(compat_header);
-        compat_content = std::string((std::istreambuf_iterator<char>(existing)),
-                                      std::istreambuf_iterator<char>());
-    } else {
-        compat_content = "#pragma once\n/* macman auto-generated macOS compatibility header */\n\n";
-    }
-
-    for (const auto& fix : known_fixes) {
-        if (build_log.find(fix.pattern) == std::string::npos) continue;
-
-        colors::print_substatus("Self-healing: " + fix.description);
-
-        if (fix.fix_type == "header_stub") {
-            // Create empty stub header
-            if (!fix.fix_value.empty()) {
-                fs::path header_path = fs::path(compat_dir) / fix.fix_value;
-                fs::create_directories(header_path.parent_path());
-                if (!fs::exists(header_path)) {
-                    std::ofstream stub(header_path.string());
-                    stub << "/* macman auto-stub: " << fix.fix_value << " */\n";
-                    stub << "/* This header is not available on macOS. */\n";
-                    stub.close();
-                    any_fix_applied = true;
-                }
-            } else {
-                // Generic linux/ header — extract the exact header name from build log
-                std::regex header_re("fatal error: '(linux/[^']+)' file not found");
-                std::smatch match;
-                if (std::regex_search(build_log, match, header_re)) {
-                    std::string header_name = match[1].str();
-                    fs::path header_path = fs::path(compat_dir) / header_name;
-                    fs::create_directories(header_path.parent_path());
-                    if (!fs::exists(header_path)) {
-                        std::ofstream stub(header_path.string());
-                        stub << "/* macman auto-stub: " << header_name << " */\n";
-                        stub << "/* This Linux kernel header is not available on macOS. */\n";
-                        stub.close();
-                        any_fix_applied = true;
-                    }
-                }
-            }
-        }
-        else if (fix.fix_type == "define" || fix.fix_type == "typedef") {
-            // Add to compat header if not already present
-            if (compat_content.find(fix.pattern) == std::string::npos) {
-                compat_content += "\n" + fix.fix_value + "\n";
-                any_fix_applied = true;
-            }
-        }
-        else if (fix.fix_type == "ldflag_remove") {
-            // Remove the problematic flag from LDFLAGS/CFLAGS in env_setup
-            std::string flag = fix.fix_value;
-            size_t pos;
-            while ((pos = env_setup.find(flag)) != std::string::npos) {
-                env_setup.erase(pos, flag.length());
-                any_fix_applied = true;
-            }
-
-            // Also try to patch Makefile/CMakeLists.txt in the source
-            for (const auto& entry : fs::recursive_directory_iterator(src_dir)) {
-                if (!entry.is_regular_file()) continue;
-                std::string fname = entry.path().filename().string();
-                if (fname == "Makefile" || fname == "CMakeLists.txt" || 
-                    fname == "configure" || fname.find(".mk") != std::string::npos) {
-                    try {
-                        std::string content;
-                        {
-                            std::ifstream f(entry.path());
-                            content = std::string((std::istreambuf_iterator<char>(f)),
-                                                   std::istreambuf_iterator<char>());
-                        }
-                        if (content.find(flag) != std::string::npos) {
-                            size_t p;
-                            while ((p = content.find(flag)) != std::string::npos) {
-                                content.erase(p, flag.length());
-                            }
-                            std::ofstream f(entry.path());
-                            f << content;
-                            any_fix_applied = true;
-                        }
-                    } catch (...) {}
-                }
-            }
-        }
-        else if (fix.fix_type == "cflag_remove") {
-            std::string flag = fix.fix_value;
-            size_t pos;
-            while ((pos = env_setup.find(flag)) != std::string::npos) {
-                env_setup.erase(pos, flag.length());
-                any_fix_applied = true;
-            }
-        }
-        else if (fix.fix_type == "cmake_patch") {
-            // Patch CMakeLists.txt files: remove REQUIRED from problematic find calls,
-            // comment out add_subdirectory(doc), and inject cmake -D flags.
-            std::string tool = fix.fix_value; // e.g. "sphinx", "alsa", "doxygen"
-            
-            for (const auto& entry : fs::recursive_directory_iterator(src_dir)) {
-                if (!entry.is_regular_file()) continue;
-                std::string fname = entry.path().filename().string();
-                if (fname != "CMakeLists.txt" && fname.find(".cmake") == std::string::npos) continue;
-                
-                try {
-                    std::string content;
-                    {
-                        std::ifstream f(entry.path());
-                        content = std::string((std::istreambuf_iterator<char>(f)),
-                                               std::istreambuf_iterator<char>());
-                    }
-                    
-                    bool modified = false;
-                    std::string lower_tool = tool;
-                    std::transform(lower_tool.begin(), lower_tool.end(), lower_tool.begin(), ::tolower);
-                    
-                    // Convert content to lines for line-by-line processing
-                    std::istringstream stream(content);
-                    std::string line;
-                    std::string new_content;
-                    
-                    while (std::getline(stream, line)) {
-                        std::string lower_line = line;
-                        std::transform(lower_line.begin(), lower_line.end(), lower_line.begin(), ::tolower);
-                        
-                        bool should_comment = false;
-                        
-                        // Comment out find_program/find_package for the tool
-                        if ((lower_line.find("find_program") != std::string::npos ||
-                             lower_line.find("find_package") != std::string::npos) &&
-                            lower_line.find(lower_tool) != std::string::npos) {
-                            should_comment = true;
-                        }
-                        
-                        // Comment out add_subdirectory(doc) for sphinx/doxygen
-                        if ((lower_tool == "sphinx" || lower_tool == "doxygen") &&
-                            lower_line.find("add_subdirectory") != std::string::npos &&
-                            lower_line.find("doc") != std::string::npos) {
-                            should_comment = true;
-                        }
-                        
-                        // Comment out message(FATAL_ERROR) that mention the tool
-                        if (lower_line.find("fatal_error") != std::string::npos &&
-                            lower_line.find(lower_tool) != std::string::npos) {
-                            should_comment = true;
-                        }
-                        
-                        if (should_comment) {
-                            new_content += "# [macman patched] " + line + "\n";
-                            modified = true;
-                        } else {
-                            // Also remove REQUIRED keyword from find calls for this tool
-                            if ((lower_line.find("find_package") != std::string::npos) &&
-                                lower_line.find(lower_tool) != std::string::npos &&
-                                line.find("REQUIRED") != std::string::npos) {
-                                size_t rpos = line.find("REQUIRED");
-                                line.erase(rpos, 8);
-                                modified = true;
-                            }
-                            new_content += line + "\n";
-                        }
-                    }
-                    
-                    if (modified) {
-                        std::ofstream f(entry.path());
-                        f << new_content;
-                        any_fix_applied = true;
-                    }
-                } catch (...) {}
-            }
-        }
-        else if (fix.fix_type == "tool_install") {
-            // Install a missing build tool via Homebrew and ensure it's in PATH
-            std::string tool = fix.fix_value;
-            
-            // Detect Homebrew prefix
-            std::string brew_prefix = fs::exists("/opt/homebrew/bin") ? "/opt/homebrew" : "/usr/local";
-            std::string tool_path = brew_prefix + "/bin/" + tool;
-            
-            if (!fs::exists(tool_path)) {
-//                 colors::print_substatus("Installing " + tool + " via Homebrew...");
-                std::string cmd = brew_prefix + "/bin/brew install " + tool + " 2>/dev/null";
-                system(cmd.c_str());
-            }
-            
-            // Inject Homebrew bin into PATH using double quotes so $PATH expands
-            if (env_setup.find("export PATH=") == std::string::npos) {
-                env_setup = "export PATH=\"" + brew_prefix + "/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH\" && " + env_setup;
-            }
-            
-            // Also explicitly set PKG_CONFIG_EXECUTABLE if this is pkg-config
-            if (tool == "pkg-config" && fs::exists(brew_prefix + "/bin/pkg-config")) {
-                env_setup += " PKG_CONFIG_EXECUTABLE='" + brew_prefix + "/bin/pkg-config' ";
-            }
-            
-            any_fix_applied = true;
-        }
-        else if (fix.fix_type == "pkg_not_found") {
-            // Extract package names from pkg-config error messages and install via Homebrew
-            // Common pattern: "Package 'cairo-fc' not found" or "- cairo-fc"
-            std::string brew_prefix = fs::exists("/opt/homebrew/bin") ? "/opt/homebrew" : "/usr/local";
-            std::string brew_user;
-            if (const char* su = std::getenv("SUDO_USER")) {
-                brew_user = std::string("sudo -u ") + su + " ";
-            }
-
-            // Mapping from pkg-config names to Homebrew formula names
-            // More specific entries MUST come before generic ones
-            std::vector<std::pair<std::string, std::string>> pkg_to_brew = {
-                {"cairo-fc", "cairo"},
-                {"cairo-ft", "cairo"},
-                {"cairo-pdf", "cairo"},
-                {"cairo-png", "cairo"},
-                {"cairo-svg", "cairo"},
-                {"cairo-xlib", "cairo"},
-                {"cairo-xcb", "cairo"},
-                {"cairo", "cairo"},
-                {"pangocairo", "pango"},
-                {"pango", "pango"},
-                {"glib-2.0", "glib"},
-                {"gobject-2.0", "glib"},
-                {"gio-2.0", "glib"},
-                {"jsoncpp", "jsoncpp"},
-                {"libcurl", "curl"},
-                {"libuv", "libuv"},
-                {"xcb-proto", "xcb-proto"},
-                {"xcb-util-image", "xcb-util-image"},
-                {"xcb-util-wm", "xcb-util-wm"},
-                {"xcb-util-xrm", "xcb-util-xrm"},
-                {"xcb-util-cursor", "xcb-util-cursor"},
-                {"xcb-util-renderutil", "xcb-util-renderutil"},
-                {"xcb-util-keysyms", "xcb-util-keysyms"},
-                {"xcb-util", "xcb-util"},
-                {"xcb-image", "xcb-util-image"},
-                {"xcb-ewmh", "xcb-util-wm"},
-                {"xcb-icccm", "xcb-util-wm"},
-                {"xcb-xrm", "xcb-util-xrm"},
-                {"xcb-cursor", "xcb-util-cursor"},
-                {"xcb-renderutil", "xcb-util-renderutil"},
-                {"xcb-xkb", "libxcb"},
-                {"xcb-randr", "libxcb"},
-                {"xcb-composite", "libxcb"},
-                {"xcb-shape", "libxcb"},
-                {"xcb-shm", "libxcb"},
-                {"xcb-render", "libxcb"},
-                {"xcb", "libxcb"},
-                {"xproto", "xorgproto"},
-                {"x11", "libx11"},
-                {"x11-xcb", "libx11"},
-                {"xext", "libxext"},
-                {"fontconfig", "fontconfig"},
-                {"freetype2", "freetype"},
-                {"harfbuzz", "harfbuzz"},
-                {"libpng", "libpng"},
-                {"pixman-1", "pixman"},
-                {"zlib", "zlib"},
-                {"expat", "expat"},
-            };
-
-            // Extract all package names from the build log
-            std::set<std::string> pkgs_to_install;
-            
-            // Pattern 1: "Package 'NAME' not found"
-            std::regex pkg_re("Package '([^']+)' not found");
-            auto it = std::sregex_iterator(build_log.begin(), build_log.end(), pkg_re);
-            for (; it != std::sregex_iterator(); ++it) {
-                pkgs_to_install.insert((*it)[1].str());
-            }
-            
-            // Pattern 2: "    - NAME" after "required packages were not found"
-            std::regex dash_re("^\\s+-\\s+(\\S+)", std::regex::multiline);
-            auto it2 = std::sregex_iterator(build_log.begin(), build_log.end(), dash_re);
-            for (; it2 != std::sregex_iterator(); ++it2) {
-                pkgs_to_install.insert((*it2)[1].str());
-            }
-
-            for (const auto& pkg_name : pkgs_to_install) {
-                // Find the brew formula name — prefer exact match, then prefix match
-                std::string brew_name = pkg_name; // default: try same name
-                bool found_exact = false;
-                for (const auto& [pc_name, formula] : pkg_to_brew) {
-                    if (pkg_name == pc_name) {
-                        brew_name = formula;
-                        found_exact = true;
-                        break;
-                    }
-                }
-                if (!found_exact) {
-                    for (const auto& [pc_name, formula] : pkg_to_brew) {
-                        if (pkg_name.find(pc_name) == 0) {
-                            brew_name = formula;
-                            break;
-                        }
-                    }
-                }
-                
-                // Check if .pc file already exists in any Homebrew pkgconfig dir
-                bool already_available = false;
-                for (const auto& opt_entry : fs::directory_iterator(brew_prefix + "/opt")) {
-                    std::string pc1 = opt_entry.path().string() + "/lib/pkgconfig/" + pkg_name + ".pc";
-                    std::string pc2 = opt_entry.path().string() + "/share/pkgconfig/" + pkg_name + ".pc";
-                    if (fs::exists(pc1) || fs::exists(pc2)) {
-                        already_available = true;
-                        break;
-                    }
-                }
-                if (already_available) continue;
-                
-                colors::print_substatus("Self-healing: Installing " + brew_name + " (provides " + pkg_name + ")...");
-                std::string cmd = brew_user + brew_prefix + "/bin/brew install " + brew_name + " >/dev/null 2>&1";
-                system(cmd.c_str());
-                any_fix_applied = true;
-            }
-            
-            // Refresh PKG_CONFIG_PATH to include ALL Homebrew pkgconfig dirs
-            std::string extra_pc_paths;
-            for (const auto& entry : fs::directory_iterator(brew_prefix + "/opt")) {
-                std::string pc_lib = entry.path().string() + "/lib/pkgconfig";
-                std::string pc_share = entry.path().string() + "/share/pkgconfig";
-                if (fs::exists(pc_lib)) extra_pc_paths += pc_lib + ":";
-                if (fs::exists(pc_share)) extra_pc_paths += pc_share + ":";
-            }
-            if (!extra_pc_paths.empty()) {
-                // Update PKG_CONFIG_PATH in env_setup
-                size_t pos = env_setup.find("PKG_CONFIG_PATH='");
-                if (pos != std::string::npos) {
-                    size_t val_start = pos + 17;
-                    env_setup.insert(val_start, extra_pc_paths);
-                }
-                any_fix_applied = true;
-            }
-        }
-        else if (fix.fix_type == "empty_archive") {
-            // macOS BSD ar rejects empty archives; GNU ar on Linux creates them.
-            // Fix: find the library's CMakeLists.txt and add a dummy source file.
-            std::regex lib_re("Linking CXX static library ([^\\n]+\\.a)");
-            std::smatch lib_match;
-            if (std::regex_search(build_log, lib_match, lib_re)) {
-                std::string lib_path = lib_match[1].str();
-                std::string lib_filename = fs::path(lib_path).filename().string();
-                std::string lib_name = lib_filename;
-                if (lib_name.find("lib") == 0) lib_name = lib_name.substr(3);
-                if (lib_name.size() > 2 && lib_name.substr(lib_name.size() - 2) == ".a") {
-                    lib_name = lib_name.substr(0, lib_name.size() - 2);
-                }
-                
-                for (const auto& entry : fs::recursive_directory_iterator(src_dir)) {
-                    if (!entry.is_regular_file()) continue;
-                    if (entry.path().filename() != "CMakeLists.txt") continue;
-                    
-                    std::string content;
-                    {
-                        std::ifstream f(entry.path());
-                        content = std::string((std::istreambuf_iterator<char>(f)),
-                                               std::istreambuf_iterator<char>());
-                    }
-                    
-                    if (content.find("add_library(" + lib_name) != std::string::npos) {
-                        // Create dummy source file
-                        std::string dummy_path = entry.path().parent_path().string() + "/macman_dummy.cpp";
-                        if (!fs::exists(dummy_path)) {
-                            std::ofstream dummy(dummy_path);
-                            dummy << "// macman: dummy for macOS BSD ar compatibility\n";
-                            dummy << "namespace { int macman_dummy_symbol = 0; }\n";
-                            dummy.close();
-                        }
-                        
-                        // Patch add_library() to include the dummy file
-                        std::string target = "add_library(" + lib_name;
-                        size_t pos = content.find(target);
-                        if (pos != std::string::npos) {
-                            int depth = 0;
-                            size_t paren_start = content.find('(', pos);
-                            for (size_t i = paren_start; i < content.size(); i++) {
-                                if (content[i] == '(') depth++;
-                                if (content[i] == ')') {
-                                    depth--;
-                                    if (depth == 0) {
-                                        content.insert(i, " ${CMAKE_CURRENT_SOURCE_DIR}/macman_dummy.cpp");
-                                        break;
-                                    }
-                                }
-                            }
-                            
-                            std::ofstream f(entry.path());
-                            f << content;
-                            any_fix_applied = true;
-                            // colors::print_substatus("Self-healing: Added dummy source to " + lib_name + " for BSD ar");
-                        }
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    // Write the compat header
-    if (any_fix_applied) {
-        std::ofstream compat_out(compat_header);
-        compat_out << compat_content;
-        compat_out.close();
-
-        // Add compat directory to include path and force-include the compat header
-        if (env_setup.find(compat_dir) == std::string::npos) {
-            // Inject -I and -include into CFLAGS/CXXFLAGS
-            std::string inject = " -I'" + compat_dir + "' -include '" + compat_header + "'";
-            
-            auto inject_into_var = [&](const std::string& var) {
-                size_t pos = env_setup.find(var + "='");
-                if (pos != std::string::npos) {
-                    size_t quote_end = env_setup.find("'", pos + var.length() + 2);
-                    if (quote_end != std::string::npos) {
-                        env_setup.insert(quote_end, inject);
-                    }
-                }
-            };
-
-            inject_into_var("CFLAGS");
-            inject_into_var("CXXFLAGS");
-        }
-    }
-
-    return any_fix_applied;
 }
 
 // --- Compile Source (Self-Healing with Retry) ---
@@ -1199,16 +593,25 @@ mkdir() {
     command mkdir "${args[@]}"
 }
 
-# ln --symbolic → -s, --force → -f, --relative → manual
+# ln --symbolic → -s, --force → -f, --relative/-r → compute relative path via python3
 ln() {
     local args=()
+    local do_relative=false
     for arg in "$@"; do
         if [[ "$arg" == "--symbolic" ]]; then args+=("-s")
         elif [[ "$arg" == "--force" ]]; then args+=("-f")
-        elif [[ "$arg" == "--relative" ]]; then continue  # Skip, not supported on macOS
+        elif [[ "$arg" == "--relative" || "$arg" == "-r" ]]; then do_relative=true
         else args+=("$arg")
         fi
     done
+    if $do_relative && [[ ${#args[@]} -ge 2 ]]; then
+        local cnt=${#args[@]}
+        local target="${args[$(( cnt - 2 ))]}"
+        local link="${args[$(( cnt - 1 ))]}"
+        local rel
+        rel=$(python3 -c "import os,sys; print(os.path.relpath(sys.argv[1], os.path.dirname(os.path.abspath(sys.argv[2]))))" "$target" "$link" 2>/dev/null)
+        [[ -n "$rel" ]] && args[$(( cnt - 2 ))]="$rel"
+    fi
     command ln "${args[@]}"
 }
 
@@ -1339,7 +742,7 @@ fi
                                    ": Recompiling with applied fixes...");
         }
 
-        ret = run_build_capturing_output(build_cmd, build_output);
+        ret = healing_engine_.run_build_capturing_output(build_cmd, build_output);
         
         if (ret == 0) {
             // Build succeeded!
@@ -1354,7 +757,7 @@ fi
         if (attempt < MAX_BUILD_RETRIES - 1) {
             colors::print_warning("Build failed. Analyzing errors...");
             
-            bool fixed = analyze_and_fix_build(build_output, work_dir, src_dir, env_setup);
+            bool fixed = healing_engine_.analyze_and_fix_build(build_output, work_dir, src_dir, env_setup);
             
             if (!fixed) {
                 colors::print_error("Build failed and no automatic fix could be applied.");
@@ -1405,7 +808,7 @@ fi
         // Collect all files from DESTDIR first (avoid iterator invalidation)
         std::vector<std::string> staged_files;
         for (const auto& entry : fs::recursive_directory_iterator(destdir)) {
-            if (entry.is_regular_file() || entry.is_symlink()) {
+            if (entry.is_symlink() || entry.is_regular_file()) {
                 staged_files.push_back(entry.path().string());
             }
         }
@@ -1438,6 +841,9 @@ fi
                     target = remap_sys_path(target);
                 }
                 
+                // Guard: skip self-referencing symlinks (target == link → ELOOP when accessed)
+                if (target == remapped_path) continue;
+
                 // Recreate symlink using ln -sf
                 system(("ln -sf '" + target + "' '" + remapped_path + "'").c_str());
             } else {
@@ -1477,7 +883,7 @@ std::vector<std::string> AURBackend::collect_installed_files(const std::string& 
     std::vector<std::string> files;
     try {
         for (const auto& entry : fs::recursive_directory_iterator(prefix)) {
-            if (entry.is_regular_file() || entry.is_symlink()) {
+            if (entry.is_symlink() || entry.is_regular_file()) {
                 files.push_back(entry.path().string());
             }
         }
