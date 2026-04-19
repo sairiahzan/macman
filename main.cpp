@@ -277,6 +277,7 @@ int main(int argc, char* argv[]) {
             break;
         }
         
+        std::cout << std::endl << NUKE_ART << std::endl;
         colors::print_warning("WARNING: This will completely wipe all installed packages and clean the cache!");
         if (!args.no_confirm) {
             std::cout << ":: Are you sure you want to proceed? [y/N] ";
