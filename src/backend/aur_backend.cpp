@@ -128,6 +128,7 @@ Package AURBackend::aur_json_to_package(const nlohmann::json& result) const {
     pkg.description = result.value("Description", "");
     pkg.homepage    = result.value("URL", "");
     pkg.source      = PackageSource::AUR;
+    pkg.installed_size = result.value("InstalledSize", (size_t)0);
 
     auto add_deps = [&](const nlohmann::json& source_array, std::vector<std::string>& target_list) {
         std::vector<std::string> ignore_deps = {

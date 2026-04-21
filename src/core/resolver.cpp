@@ -1,6 +1,7 @@
 // resolver.cpp [V1.2.0 Patch]
 
 #include "core/resolver.hpp"
+#include "macman.hpp"
 #include "backend/homebrew_backend.hpp"
 #include "backend/aur_backend.hpp"
 #include "cli/colors.hpp"
@@ -43,10 +44,23 @@ Package Resolver::resolve_package(const std::string& raw_name) const {
     });
 
     auto brew_pkg_remote = brew_future.get();
-    if (brew_pkg_remote) return *brew_pkg_remote;
+    if (brew_pkg_remote) {
+        if (brew_pkg_remote->download_size == 0 && !brew_pkg_remote->url.empty()) {
+            HttpClient http;
+            brew_pkg_remote->download_size = http.get_file_size(brew_pkg_remote->url);
+        }
+        return *brew_pkg_remote;
+    }
 
     auto aur_pkg = aur_future.get();
-    if (aur_pkg) return *aur_pkg;
+    if (aur_pkg) {
+        if (aur_pkg->download_size == 0) {
+            HttpClient http;
+            std::string snapshot_url = std::string(AUR_PACKAGE_BASE) + aur_pkg->name + ".tar.gz";
+            aur_pkg->download_size = http.get_file_size(snapshot_url);
+        }
+        return *aur_pkg;
+    }
 
     // Not found
     Package empty;
@@ -135,11 +149,19 @@ std::vector<Package> Resolver::resolve_all_concurrently(const std::vector<std::s
     // Concurrently fetch download sizes for packages that have URLs but size 0
     std::vector<std::future<void>> size_futures;
     for (auto& p : unique_to_install) {
-        if (p.source == PackageSource::HOMEBREW && p.download_size == 0 && !p.url.empty()) {
-            size_futures.push_back(std::async(std::launch::async, [&p]() {
-                HttpClient http;
-                p.download_size = http.get_file_size(p.url);
-            }));
+        if (p.download_size == 0) {
+            if (p.source == PackageSource::HOMEBREW && !p.url.empty()) {
+                size_futures.push_back(std::async(std::launch::async, [&p]() {
+                    HttpClient http;
+                    p.download_size = http.get_file_size(p.url);
+                }));
+            } else if (p.source == PackageSource::AUR) {
+                size_futures.push_back(std::async(std::launch::async, [&p]() {
+                    HttpClient http;
+                    std::string snapshot_url = std::string(AUR_PACKAGE_BASE) + p.name + ".tar.gz";
+                    p.download_size = http.get_file_size(snapshot_url);
+                }));
+            }
         }
     }
     for (auto& f : size_futures) {

@@ -42,9 +42,16 @@ bool Transaction::confirm_transaction(TransactionType type,
     if (type == TransactionType::INSTALL || type == TransactionType::UPGRADE) {
         double mb = static_cast<double>(total_size) / (1024 * 1024);
         std::cout << colors::BOLD_WHITE << "Total Download Size: " << std::fixed << std::setprecision(2) << mb << " MiB" << colors::RESET << std::endl;
+    } else if (type == TransactionType::REMOVE) {
+        double mb = static_cast<double>(total_size) / (1024 * 1024);
+        std::cout << colors::BOLD_WHITE << "Total Freed Size: " << std::fixed << std::setprecision(2) << mb << " MiB" << colors::RESET << std::endl;
     }
 
-    std::cout << colors::BOLD_BLUE << ":: " << colors::BOLD_WHITE << "Proceed with installation? [Y/n] " << colors::RESET;
+    std::string prompt = "Proceed with installation? [Y/n] ";
+    if (type == TransactionType::REMOVE) prompt = "Proceed with removal? [Y/n] ";
+    else if (type == TransactionType::UPGRADE) prompt = "Proceed with upgrade? [Y/n] ";
+
+    std::cout << colors::BOLD_BLUE << ":: " << colors::BOLD_WHITE << prompt << colors::RESET;
     std::string input;
     std::getline(std::cin, input);
 
@@ -143,7 +150,10 @@ bool Transaction::remove_multiple(const std::vector<std::string>& packages, bool
 
     if (to_remove.empty()) return all_success;
 
-    if (!confirm_transaction(TransactionType::REMOVE, to_remove, 0)) {
+    size_t total_size = 0;
+    for (const auto& p : to_remove) total_size += p.installed_size;
+
+    if (!confirm_transaction(TransactionType::REMOVE, to_remove, total_size)) {
         std::cout << "Transaction cancelled." << std::endl;
         return false;
     }
