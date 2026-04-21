@@ -25,6 +25,8 @@
 #include <cstdlib>
 #include <iostream>
 
+#include "core/checksum.hpp"
+
 namespace fs = std::filesystem;
 
 namespace macman {
@@ -485,27 +487,9 @@ bool AURBackend::download_sources(const PKGBUILDInfo& info, const std::string& w
             std::string file_path = work_dir + "/" + downloaded_file;
 
             colors::print_substatus("Verifying SHA-256 for: " + downloaded_file);
-            std::string expected_sha = info.sha256sums[idx];
-            
-            // Re-use system shasum for verification
-            std::string check_cmd = "shasum -a 256 \"" + file_path + "\" | awk '{print $1}'";
-            FILE* p = popen(check_cmd.c_str(), "r");
-            if (p) {
-                char buf[128];
-                if (fgets(buf, sizeof(buf), p) != nullptr) {
-                    std::string actual_sha = buf;
-                    if (!actual_sha.empty() && actual_sha.back() == '\n') actual_sha.pop_back();
-                    
-                    if (actual_sha != expected_sha) {
-                        colors::print_error("SECURITY ALERT: Checksum mismatch for " + downloaded_file);
-                        colors::print_error("Expected: " + expected_sha);
-                        colors::print_error("Got:      " + actual_sha);
-                        colors::print_error("Possible Man-in-the-Middle (MITM) attack or corrupted download.");
-                        pclose(p);
-                        return false;
-                    }
-                }
-                pclose(p);
+            if (!Checksum::verify_sha256(file_path, info.sha256sums[idx])) {
+                colors::print_error("Possible Man-in-the-Middle (MITM) attack or corrupted download.");
+                return false;
             }
             colors::print_success("Checksum verified.");
         }

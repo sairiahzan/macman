@@ -46,6 +46,7 @@ set(MACMAN_SOURCES
     src/core/remover.cpp
     src/core/self_healing.cpp
     src/core/process.cpp
+    src/core/checksum.cpp
 
     # Network
     src/net/http_client.cpp

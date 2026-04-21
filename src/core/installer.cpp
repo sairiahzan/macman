@@ -37,41 +37,13 @@ extern char** environ;
 #  define MACMAN_ENVIRON environ
 #endif
 
+#include "core/checksum.hpp"
+
 namespace fs = std::filesystem;
 
 namespace macman {
 
 Installer::Installer(Database& db) : db_(db) {}
-
-bool Installer::verify_checksum(const std::string& file_path, const std::string& expected_sha256) const {
-    if (expected_sha256.empty()) return true; // No hash provided
-
-    colors::print_substatus("Verifying SHA-256 for: " + fs::path(file_path).filename().string());
-    
-    std::string cmd = "shasum -a 256 '" + file_path + "' | awk '{print $1}'";
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) return false;
-
-    char buffer[128];
-    std::string result = "";
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        result += buffer;
-    }
-    pclose(pipe);
-
-    // Trim newlines
-    if (!result.empty() && result.back() == '\n') result.pop_back();
-
-    if (result != expected_sha256) {
-        colors::print_error("SHA-256 verification failed!");
-        colors::print_error("Expected: " + expected_sha256);
-        colors::print_error("Got:      " + result);
-        return false;
-    }
-    
-    colors::print_success("Checksum matched perfectly.");
-    return true;
-}
 
 void Installer::fix_macho_rpaths(const std::string& deploy_dir) const {
     // We traverse /bin and /lib to fix any broken dynamic library linkage
@@ -303,9 +275,13 @@ bool Installer::install_package(const Package& pkg, const std::string& reason) {
             }
         }
         
-        // SHA-256 verification (Phase 3 spec)
-        if (!verify_checksum(tarball_path, pkg.sha256)) {
-            return false;
+        // MITM Protection: SHA-256 verification
+        if (!pkg.sha256.empty()) {
+            colors::print_substatus("Verifying SHA-256 for: " + pkg.name);
+            if (!Checksum::verify_sha256(tarball_path, pkg.sha256)) {
+                return false;
+            }
+            colors::print_success("Checksum matched perfectly.");
         }
 
         HomebrewBackend brew;

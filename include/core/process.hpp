@@ -19,4 +19,10 @@ int run_exec(const std::string& binary,
              bool quiet = true,
              const std::string& cwd = "");
 
+/// Direct binary execution with stdout capture.
+int run_exec_capturing(const std::string& binary,
+                        const std::vector<std::string>& args,
+                        std::string& output,
+                        const std::string& cwd = "");
+
 } // namespace macman
