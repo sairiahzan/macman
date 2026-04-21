@@ -13,8 +13,10 @@
 #include "macman.hpp"
 #include "core/config.hpp"
 #include "cli/colors.hpp"
+#include "core/process.hpp"
 #include "ui/progress_bar.hpp"
 #include <filesystem>
+#include <sys/stat.h>
 #include <fstream>
 #include <sstream>
 #include <algorithm>
@@ -33,9 +35,12 @@ AURBackend::AURBackend()
     : build_dir_(get_cache_dir() + "/builds"),
       healing_engine_(build_dir_) {
     try {
-        if (!fs::exists(build_dir_)) {
-            fs::create_directories(build_dir_);
+        // Destroy entire build directory to clear compiler caches (e.g. config.cache)
+        // Autotools will aggressively reload dead CFLAGS if this persists between attempts.
+        if (fs::exists(build_dir_)) {
+            fs::remove_all(build_dir_);
         }
+        fs::create_directories(build_dir_);
     } catch (...) {}
 }
 
@@ -172,8 +177,7 @@ std::optional<PKGBUILDInfo> AURBackend::download_pkgbuild(const std::string& nam
     }
     fs::create_directories(extract_dir);
 
-    std::string cmd = "tar xzf '" + snapshot_path + "' -C '" + extract_dir + "' --strip-components=1";
-    if (system(cmd.c_str()) != 0) {
+    if (run_exec("/usr/bin/tar", {"xzf", snapshot_path, "-C", extract_dir, "--strip-components=1"}, false) != 0) {
         colors::print_error("Failed to extract PKGBUILD archive (or unsupported tar format)");
         return std::nullopt;
     }
@@ -222,7 +226,7 @@ echo "END"
     std::ofstream out(script_path);
     out << dumper_script;
     out.close();
-    system(("chmod +x '" + script_path + "'").c_str());
+    ::chmod(script_path.c_str(), 0755);
 
     std::string cmd = "bash " + script_path + " '" + pkgbuild_path + "'";
     FILE* pipe = popen(cmd.c_str(), "r");
@@ -433,7 +437,12 @@ bool AURBackend::download_sources(const PKGBUILDInfo& info, const std::string& w
             raw_url.replace(p, 4, info.url);
         }
 
-        std::string cmd;
+        // Ensure work_dir exists and is writable
+        if (!fs::exists(work_dir)) {
+            fs::create_directories(work_dir);
+        }
+
+        int ret;
         if (raw_url.find("git+") == 0 || raw_url.find("git://") == 0) {
             std::string git_url = raw_url;
             if (git_url.find("git+") == 0) git_url = git_url.substr(4);
@@ -443,32 +452,24 @@ bool AURBackend::download_sources(const PKGBUILDInfo& info, const std::string& w
                 git_url = git_url.substr(0, git_url.find("#"));
             }
             
-            // Use custom_name as clone target dir (makepkg does the same)
-            std::string clone_target = custom_name.empty() ? "" : " '" + custom_name + "'";
-            
             colors::print_substatus("Cloning git repository: " + git_url);
-            cmd = "cd '" + work_dir + "' && git clone --depth 1 '" + git_url + "'" + clone_target + " 2>/dev/null";
+            std::vector<std::string> git_args = {"clone", "--depth", "1", git_url};
+            if (!custom_name.empty()) git_args.push_back(custom_name);
+            ret = run_exec("/usr/bin/git", git_args, true, work_dir);
         } else {
             colors::print_substatus("Downloading source: " + (custom_name.empty() ? raw_url : custom_name));
-            std::string output_flag = custom_name.empty() ? "-O" : "-o '" + custom_name + "'";
-            cmd = "cd '" + work_dir + "' && /usr/bin/curl -L " + output_flag + " -s '" + raw_url + "'";
+            std::vector<std::string> curl_args = {"-L", "-s"};
+            if (custom_name.empty()) {
+                curl_args.push_back("-O");
+            } else {
+                curl_args.push_back("-o");
+                curl_args.push_back(custom_name);
+            }
+            curl_args.push_back(raw_url);
+            ret = run_exec("/usr/bin/curl", curl_args, false, work_dir);
         }
-
-        // Ensure work_dir exists and is writable
-        if (!fs::exists(work_dir)) {
-            fs::create_directories(work_dir);
-        }
-        
-        // Debug: Log the command for troubleshooting if it fails
-        int ret = system(cmd.c_str());
 
         if (ret != 0) {
-            if (WIFSIGNALED(ret)) {
-                colors::print_error("Download process killed by signal " + std::to_string(WTERMSIG(ret)));
-                if (WTERMSIG(ret) == 9) {
-                    colors::print_substatus("Tip: This often indicates macOS security software or SIP restriction.");
-                }
-            }
             colors::print_error("Failed to download or clone: " + raw_url);
             return false;
         }
@@ -509,10 +510,7 @@ bool AURBackend::compile_source(const PKGBUILDInfo& info, const std::string& wor
 
     // Pre-build: Install essential build tools if missing
     // Homebrew refuses to run as root — detect SUDO_USER and run brew as them
-    std::string brew_user;
-    if (const char* sudo_user = std::getenv("SUDO_USER")) {
-        brew_user = std::string("sudo -u ") + sudo_user + " ";
-    }
+    const char* sudo_user = std::getenv("SUDO_USER");
     
     std::vector<std::pair<std::string, std::string>> essential_tools = {
         {"pkg-config", "pkgconf"},  // modern Homebrew installs pkgconf which provides pkg-config
@@ -521,9 +519,12 @@ bool AURBackend::compile_source(const PKGBUILDInfo& info, const std::string& wor
     for (const auto& [tool_bin, brew_name] : essential_tools) {
         std::string tool_path = brew_prefix + "/bin/" + tool_bin;
         if (!fs::exists(tool_path)) {
-//             colors::print_substatus("Installing missing build tool: " + brew_name + "...");
-            std::string cmd = brew_user + brew_prefix + "/bin/brew install " + brew_name + " >/dev/null 2>&1";
-            system(cmd.c_str());
+            std::string brew_bin = brew_prefix + "/bin/brew";
+            if (sudo_user) {
+                run_exec("/usr/bin/sudo", {"-u", sudo_user, brew_bin, "install", brew_name});
+            } else {
+                run_exec(brew_bin, {"install", brew_name});
+            }
         }
     }
 
@@ -531,26 +532,102 @@ bool AURBackend::compile_source(const PKGBUILDInfo& info, const std::string& wor
     std::string extra_cflags, extra_ldflags, extra_pkgconfig, extra_libs;
     std::vector<std::string> potential_kegs = {"e2fsprogs", "openssl", "icu4c", "libxml2", "libedit", "ncurses"};
     for (const auto& keg : potential_kegs) {
+        // Check both Homebrew cellar and macman's own prefix
         std::string keg_path = brew_prefix + "/opt/" + keg;
         if (fs::exists(keg_path)) {
             extra_cflags += " -I" + keg_path + "/include";
             extra_ldflags += " -L" + keg_path + "/lib";
             extra_pkgconfig += ":" + keg_path + "/lib/pkgconfig";
             if (keg == "e2fsprogs") {
-                extra_libs += " -lcom_err -lblkid -luuid";
+                extra_libs += " -lext2fs -lcom_err -lblkid -luuid";
             }
         }
     }
 
+    // Also add macman's own install prefix — unconditionally.
+    // Use an absolute hardcoded fallback to ensure sudo environment resets do not wipe this string
+    std::string safe_prefix = install_prefix;
+    if (safe_prefix.empty() || safe_prefix == "/var/root/.macman" || safe_prefix.find("\n") != std::string::npos) {
+        safe_prefix = macman::get_prefix();
+    }
+
+    extra_cflags += std::string(" -I") + safe_prefix + "/include";
+    extra_cflags += std::string(" -I") + safe_prefix + "/include/ext2fs";
+    extra_cflags += std::string(" -I") + safe_prefix + "/include/et";
+    
+    extra_ldflags += std::string(" -L") + safe_prefix + "/lib";
+    extra_pkgconfig += std::string(":") + safe_prefix + "/lib/pkgconfig";
+
+    // e2fsprogs keg-only libs needed when installed via macman prefix
+    if (extra_libs.find("-lcom_err") == std::string::npos) {
+        extra_libs += " -lext2fs -lcom_err -lblkid -luuid";
+    }
+
+    // Pre-build: Native C++ rewrite of .pc files to remove Homebrew bottle placeholders.
+    // Avoids fragile BSD sed regex parsing and macOS permission lockouts.
+    std::regex re_cellar("@@HOMEBREW_CELLAR@@/[^/]+/[^/]+");
+    std::regex re_prefix("@@HOMEBREW_PREFIX@@");
+    std::regex re_repo("@@HOMEBREW_REPOSITORY@@");
+    std::regex re_usr_local("^prefix=/usr/local", std::regex::multiline);
+    std::regex re_usr("^prefix=/usr$", std::regex::multiline);
+
+    for (const auto& pc_dir_suffix : {"/lib/pkgconfig", "/share/pkgconfig"}) {
+        std::string pc_dir = safe_prefix + pc_dir_suffix;
+        if (!fs::exists(pc_dir)) continue;
+        
+        for (const auto& entry : fs::directory_iterator(pc_dir)) {
+            if (entry.is_regular_file() && entry.path().extension() == ".pc") {
+                try {
+                    // Unlock permissions for Homebrew 0444 files
+                    fs::permissions(entry.path(), fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::add);
+                    
+                    std::ifstream in(entry.path());
+                    std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+                    in.close();
+                    
+                    bool changed = false;
+                    std::string new_content = std::regex_replace(content, re_cellar, safe_prefix);
+                    if (new_content != content) { content = new_content; changed = true; }
+                    
+                    new_content = std::regex_replace(content, re_prefix, safe_prefix);
+                    if (new_content != content) { content = new_content; changed = true; }
+                    
+                    new_content = std::regex_replace(content, re_repo, safe_prefix);
+                    if (new_content != content) { content = new_content; changed = true; }
+                    
+                    new_content = std::regex_replace(content, re_usr_local, "prefix=" + safe_prefix);
+                    if (new_content != content) { content = new_content; changed = true; }
+                    
+                    new_content = std::regex_replace(content, re_usr, "prefix=" + safe_prefix);
+                    if (new_content != content) { content = new_content; changed = true; }
+
+                    if (changed) {
+                        std::ofstream out(entry.path(), std::ios::trunc);
+                        out << content;
+                        out.close();
+                    }
+                } catch (...) {}
+            }
+        }
+    }
+
+    // (Ext2fs include already forced above)
+
     std::string env_setup = "export PATH=\"" + brew_prefix + "/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH\" && "
                            "export CC=clang CXX=clang++ "
-                           "CFLAGS='-O2 -I" + brew_prefix + "/include -I/usr/local/include" + extra_cflags + "' "
-                           "CXXFLAGS='-O2 -I" + brew_prefix + "/include -I/usr/local/include" + extra_cflags + "' "
-                           "LDFLAGS='-L" + brew_prefix + "/lib -L/usr/local/lib" + extra_ldflags + "' "
-                           "LIBS='" + extra_libs + "' "
-                           "PKG_CONFIG_PATH='" + brew_prefix + "/lib/pkgconfig:" + brew_prefix + "/share/pkgconfig:/usr/local/lib/pkgconfig" + extra_pkgconfig + "' "
-                           "EXPAT_LIBPATH='/usr/lib' "
-                           "PREFIX='" + install_prefix + "' && ";
+                           "CFLAGS=\"-O2 -I" + brew_prefix + "/include -I/usr/local/include" + extra_cflags + "\" "
+                           "CXXFLAGS=\"-O2 -I" + brew_prefix + "/include -I/usr/local/include" + extra_cflags + "\" "
+                           "LDFLAGS=\"-L" + brew_prefix + "/lib -L/usr/local/lib" + extra_ldflags + " -Wl,-headerpad_max_install_names\" "
+                           "LIBS=\"" + extra_libs + "\" "
+                           "PKG_CONFIG_PATH=\"" + brew_prefix + "/lib/pkgconfig:" + brew_prefix + "/share/pkgconfig:/usr/local/lib/pkgconfig" + extra_pkgconfig + "\" "
+                           "EXPAT_LIBPATH=\"/usr/lib\" "
+                           "PREFIX=\"" + install_prefix + "\" && ";
+
+    // Detect if we need to force cross-compile mode for macOS Apple Silicon
+    std::string extra_configure_flags = "";
+    #if defined(__APPLE__) && (defined(__arm64__) || defined(__aarch64__))
+        extra_configure_flags = " --host=arm-apple-darwin ";
+    #endif
 
     // Containerization Concept: DESTDIR Staging Directory
     std::string destdir = build_dir_ + "/destdir-" + info.pkgname;
@@ -565,6 +642,14 @@ bool AURBackend::compile_source(const PKGBUILDInfo& info, const std::string& wor
     fs::create_directories(destdir + "/usr/local/share/man/man1");
     fs::create_directories(destdir + "/opt");
 
+    std::string build_cmds = info.build_commands;
+    // Replace ./configure with just configure to use our wrapper
+    size_t pos_conf = 0;
+    while ((pos_conf = build_cmds.find("./configure", pos_conf)) != std::string::npos) {
+        build_cmds.replace(pos_conf, 11, "configure");
+        pos_conf += 9;
+    }
+
     // Extended macOS compatibility wrapper script
     // PATH and PKG_CONFIG are injected INSIDE the script so they survive posix_spawn
     std::string wrapper_script = build_dir_ + "/macman_makepkg_wrapper.sh";
@@ -576,6 +661,21 @@ export PATH=")BASH" + brew_prefix + R"BASH(/bin:/usr/local/bin:/usr/bin:/bin:/us
 export PKG_CONFIG_EXECUTABLE=")BASH" + brew_prefix + R"BASH(/bin/pkg-config"
 
 # ── macOS Compatibility Wrappers ─────────────────────────────────────────────
+
+# Custom configure wrapper to inject --host if needed
+configure() {
+    local args=()
+    local has_host=false
+    for arg in "$@"; do
+        if [[ "$arg" == --host=* ]]; then has_host=true; fi
+        args+=("$arg")
+    done
+    if ! $has_host; then
+        ./configure "${args[@]}")BASH" + extra_configure_flags + R"BASH(
+    else
+        ./configure "${args[@]}"
+    fi
+}
 
 # GNU install -D → macOS install with mkdir -p
 install() {
@@ -747,7 +847,7 @@ cd "$srcdir"
 
 build() {
     :
-)BASH" + info.build_commands + R"BASH(
+)BASH" + build_cmds + R"BASH(
 }
 
 package() {
@@ -792,8 +892,8 @@ fi
             std::ofstream out(wrapper_script);
             out << script_content;
             out.close();
-            // Use chmod instead of fs::permissions to avoid macOS permission exceptions
-            system(("chmod +x '" + wrapper_script + "'").c_str());
+            // Use POSIX chmod() — fs::permissions() throws on macOS in some cases
+            ::chmod(wrapper_script.c_str(), 0755);
         }
 
         std::string build_cmd = env_setup + wrapper_script;
@@ -892,9 +992,9 @@ fi
             
             std::string remapped_path = remap_sys_path(relative_path);
             
-            // Use system commands — far more reliable on macOS than C++ fs::copy
+            // Deploy to target path using POSIX APIs
             fs::path target_dir = fs::path(remapped_path).parent_path();
-            system(("mkdir -p '" + target_dir.string() + "'").c_str());
+            fs::create_directories(target_dir);
 
             if (fs::is_symlink(staged_path)) {
                 // Read the symlink target
@@ -908,12 +1008,16 @@ fi
                 // Guard: skip self-referencing symlinks (target == link → ELOOP when accessed)
                 if (target == remapped_path) continue;
 
-                // Recreate symlink using ln -sf
-                system(("ln -sf '" + target + "' '" + remapped_path + "'").c_str());
+                // Recreate symlink
+                std::error_code ec;
+                fs::remove(remapped_path, ec);
+                fs::create_symlink(target, remapped_path, ec);
             } else {
                 // Copy normal file
-                int cp_ret = system(("cp -f '" + staged_path + "' '" + remapped_path + "' 2>/dev/null || "
-                                     "cp -Rf '" + staged_path + "' '" + remapped_path + "' 2>/dev/null").c_str());
+                int cp_ret = run_exec("/bin/cp", {"-f", staged_path, remapped_path});
+                if (cp_ret != 0) {
+                    cp_ret = run_exec("/bin/cp", {"-Rf", staged_path, remapped_path});
+                }
                 
                 if (cp_ret != 0) {
                     colors::print_warning("Could not install: " + remapped_path + " (skipping)");
@@ -922,7 +1026,7 @@ fi
 
                 // Make binaries executable
                 if (remapped_path.find("/bin/") != std::string::npos) {
-                    system(("chmod +x '" + remapped_path + "' 2>/dev/null").c_str());
+                    ::chmod(remapped_path.c_str(), 0755);
                 }
             }
 

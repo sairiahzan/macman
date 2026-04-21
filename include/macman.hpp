@@ -6,6 +6,8 @@
 #pragma once
 
 #include <string>
+#include <cstdlib>
+#include <unistd.h>
 
 namespace macman {
 
@@ -18,14 +20,16 @@ constexpr const char* DESCRIPTION   = "The blazing-fast package manager for macO
 // --- System Paths ---
 // All paths under $HOME/.macman — no sudo required (Homebrew-style user-space)
 
-#include <cstdlib>
-
 inline std::string get_macman_root() {
     // When running under sudo, HOME points to /var/root which has no macman data.
-    // Use SUDO_USER to find the real user's home directory.
+    // Use SUDO_USER, then getlogin(), to find the real user's home directory.
     const char* sudo_user = std::getenv("SUDO_USER");
     if (sudo_user) {
         return std::string("/Users/") + sudo_user + "/.macman";
+    }
+    const char* login_name = getlogin();
+    if (login_name && std::string(login_name) != "root") {
+        return std::string("/Users/") + login_name + "/.macman";
     }
     const char* home = std::getenv("HOME");
     return std::string(home ? home : "/tmp") + "/.macman";

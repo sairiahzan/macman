@@ -2,6 +2,7 @@
 
 #include "core/self_healing.hpp"
 #include "cli/colors.hpp"
+#include "core/process.hpp"
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -372,9 +373,15 @@ bool SelfHealingEngine::analyze_and_fix_build(const std::string& build_log,
             std::string flag = fix.fix_value;
             if (env_setup.find(flag) == std::string::npos) {
                 auto inject_into_var = [&](const std::string& var) {
-                    size_t pos = env_setup.find(var + "='");
+                    size_t pos = env_setup.find(var + "=\"");
+                    char quote_char = '\"';
+                    if (pos == std::string::npos) {
+                        pos = env_setup.find(var + "='");
+                        quote_char = '\'';
+                    }
+                    
                     if (pos != std::string::npos) {
-                        size_t quote_end = env_setup.find("'", pos + var.length() + 2);
+                        size_t quote_end = env_setup.find(quote_char, pos + var.length() + 2);
                         if (quote_end != std::string::npos) {
                             env_setup.insert(quote_end, " " + flag);
                         }
@@ -461,8 +468,7 @@ bool SelfHealingEngine::analyze_and_fix_build(const std::string& build_log,
             std::string tool_path = brew_prefix + "/bin/" + tool;
 
             if (!fs::exists(tool_path)) {
-                std::string cmd = brew_prefix + "/bin/brew install " + tool + " 2>/dev/null";
-                system(cmd.c_str());
+                run_exec(brew_prefix + "/bin/brew", {"install", tool});
             }
 
             if (env_setup.find("export PATH=") == std::string::npos) {
@@ -477,10 +483,7 @@ bool SelfHealingEngine::analyze_and_fix_build(const std::string& build_log,
         }
         else if (fix.fix_type == "pkg_not_found") {
             std::string brew_prefix = fs::exists("/opt/homebrew/bin") ? "/opt/homebrew" : "/usr/local";
-            std::string brew_user;
-            if (const char* su = std::getenv("SUDO_USER")) {
-                brew_user = std::string("sudo -u ") + su + " ";
-            }
+            const char* sudo_user = std::getenv("SUDO_USER");
 
             std::vector<std::pair<std::string, std::string>> pkg_to_brew = {
                 {"cairo-fc", "cairo"}, {"cairo-ft", "cairo"}, {"cairo-pdf", "cairo"},
@@ -540,8 +543,12 @@ bool SelfHealingEngine::analyze_and_fix_build(const std::string& build_log,
                 if (already_available) continue;
 
                 colors::print_substatus("Self-healing: Installing " + brew_name + " (provides " + pkg_name + ")...");
-                std::string cmd = brew_user + brew_prefix + "/bin/brew install " + brew_name + " >/dev/null 2>&1";
-                system(cmd.c_str());
+                std::string brew_bin = brew_prefix + "/bin/brew";
+                if (sudo_user) {
+                    run_exec("/usr/bin/sudo", {"-u", sudo_user, brew_bin, "install", brew_name});
+                } else {
+                    run_exec(brew_bin, {"install", brew_name});
+                }
                 any_fix_applied = true;
             }
 

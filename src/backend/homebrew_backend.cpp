@@ -13,8 +13,10 @@
 #include "macman.hpp"
 #include "core/config.hpp"
 #include "cli/colors.hpp"
+#include "core/process.hpp"
 #include "ui/progress_bar.hpp"
 #include <filesystem>
+#include <sys/stat.h>
 #include <fstream>
 #include <algorithm>
 #include <cstdlib>
@@ -406,12 +408,74 @@ bool HomebrewBackend::install_bottle(const std::string& bottle_path, const std::
     // Let's just unpack the tarball directly into deploy_dir.
 
     // A macman stage install should just dump everything into deploy_dir. 
-    std::string cmd = "tar xzf '" + bottle_path + "' -C '" + deploy_dir + "/' --strip-components=2 2>/dev/null";
-    int ret = system(cmd.c_str());
+    int ret = run_exec("/usr/bin/tar", {"xzf", bottle_path, "-C", deploy_dir + "/", "--strip-components=2"});
     
     if (ret != 0) {
         colors::print_error("Failed to extract bottle to stage");
         return false;
+    }
+
+    // Homebrew bottles contain @@HOMEBREW_CELLAR@@ and @@HOMEBREW_PREFIX@@
+    // placeholders that Homebrew normally rewrites during its own install.
+    // Since macman extracts bottles directly, we must rewrite them ourselves
+    // so that pkg-config, scripts, and configs find the correct paths.
+    std::string macman_prefix = get_prefix();
+    std::vector<std::string> placeholder_dirs = {
+        deploy_dir + "/lib/pkgconfig",
+        deploy_dir + "/share/pkgconfig"
+    };
+    for (const auto& pc_dir : placeholder_dirs) {
+        if (!fs::exists(pc_dir)) continue;
+        for (const auto& entry : fs::directory_iterator(pc_dir)) {
+            if (!entry.is_regular_file()) continue;
+            try {
+                std::string content;
+                {
+                    std::ifstream f(entry.path());
+                    content.assign(std::istreambuf_iterator<char>(f),
+                                   std::istreambuf_iterator<char>());
+                }
+                bool modified = false;
+                // Replace @@HOMEBREW_CELLAR@@/<pkg>/<ver> → macman_prefix
+                // and @@HOMEBREW_PREFIX@@ → macman_prefix
+                auto replace_all = [&](const std::string& from, const std::string& to) {
+                    size_t pos = 0;
+                    while ((pos = content.find(from, pos)) != std::string::npos) {
+                        content.replace(pos, from.length(), to);
+                        pos += to.length();
+                        modified = true;
+                    }
+                };
+                
+                // @@HOMEBREW_CELLAR@@/pkgname/version → macman_prefix
+                size_t pos = 0;
+                while ((pos = content.find("@@HOMEBREW_CELLAR@@", pos)) != std::string::npos) {
+                    size_t end = content.find_first_of("\n \t'\"", pos + 18);
+                    if (end == std::string::npos) end = content.length();
+                    content.replace(pos, end - pos, macman_prefix);
+                    pos += macman_prefix.length();
+                    modified = true;
+                }
+                
+                replace_all("@@HOMEBREW_PREFIX@@", macman_prefix);
+                
+                // Handle hardcoded /usr/local or /opt/homebrew prefixes in bottles
+                if (content.find("prefix=/usr/local") != std::string::npos) {
+                    replace_all("prefix=/usr/local", "prefix=" + macman_prefix);
+                }
+                if (content.find("prefix=/opt/homebrew") != std::string::npos) {
+                    replace_all("prefix=/opt/homebrew", "prefix=" + macman_prefix);
+                }
+                
+                if (modified) {
+                    ::chmod(entry.path().c_str(), 0644);
+                    std::ofstream f(entry.path());
+                    f << content;
+                    f.close();
+                    ::chmod(entry.path().c_str(), 0444);
+                }
+            } catch (...) {}
+        }
     }
 
     // Traverse the unzipped directory to record installed files

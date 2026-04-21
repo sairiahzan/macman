@@ -12,6 +12,7 @@
 #include "net/downloader.hpp"
 #include "macman.hpp"
 #include "cli/colors.hpp"
+#include "core/process.hpp"
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -26,6 +27,7 @@
 #include <sys/wait.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 #ifdef __APPLE__
 #  include <crt_externs.h>
@@ -73,22 +75,70 @@ bool Installer::verify_checksum(const std::string& file_path, const std::string&
 
 void Installer::fix_macho_rpaths(const std::string& deploy_dir) const {
     // We traverse /bin and /lib to fix any broken dynamic library linkage
-    std::string bin_dir = deploy_dir + "/bin";
-    if (!fs::exists(bin_dir)) return;
+    std::string prefix = get_prefix();
+    std::vector<std::string> target_dirs = {deploy_dir + "/bin", deploy_dir + "/lib"};
 
-    colors::print_substatus("Patching Mach-O RPATHs...");
-    for (const auto& entry : fs::directory_iterator(bin_dir)) {
-        if (!entry.is_regular_file()) continue;
+    bool any_patched = false;
 
-        std::string file = entry.path().string();
-        
-        // Use install_name_tool to ensure the executable looks in ~/.macman/lib
-        std::string cmd = "install_name_tool -add_rpath '" + get_prefix() + "/lib' '" + file + "' 2>/dev/null";
-        system(cmd.c_str());
-        
-        // Also fix ID if necessary
-        std::string cmd2 = "install_name_tool -id '@rpath/" + entry.path().filename().string() + "' '" + file + "' 2>/dev/null";
-        system(cmd2.c_str());
+    for (const auto& dir : target_dirs) {
+        if (!fs::exists(dir)) continue;
+
+        for (const auto& entry : fs::directory_iterator(dir)) {
+            if (!entry.is_regular_file() && !entry.is_symlink()) continue;
+            if (entry.is_symlink()) continue;
+
+            std::string file = entry.path().string();
+            std::string filename = entry.path().filename().string();
+            bool is_dylib = (entry.path().extension() == ".dylib");
+            bool is_bin = (dir == deploy_dir + "/bin");
+
+            if (!is_dylib && !is_bin) continue;
+
+            if (!any_patched) {
+                colors::print_substatus("Patching Mach-O binaries and RPATHs...");
+                any_patched = true;
+            }
+
+            // Ensure write access for mach-o tools
+            ::chmod(file.c_str(), 0755);
+
+            std::string rpath_out, id_out;
+            run_capturing_output("/usr/bin/install_name_tool -add_rpath '" + prefix + "/lib' '" + file + "' 2>/dev/null", rpath_out);
+
+            if (is_dylib) {
+                run_capturing_output("/usr/bin/install_name_tool -id '" + prefix + "/lib/" + filename + "' '" + file + "' 2>/dev/null", id_out);
+            }
+
+            std::string otool_out;
+            if (run_capturing_output("/usr/bin/otool -L '" + file + "' 2>/dev/null", otool_out) == 0) {
+                std::istringstream stream(otool_out);
+                std::string line;
+                while (std::getline(stream, line)) {
+                    size_t first_slash = line.find_first_not_of(" \t");
+                    if (first_slash == std::string::npos) continue;
+                    size_t space = line.find(' ', first_slash);
+                    if (space == std::string::npos) continue;
+
+                    std::string dylib_path = line.substr(first_slash, space - first_slash);
+
+                    if (dylib_path.find("@@HOMEBREW") != std::string::npos ||
+                        dylib_path.find("/opt/homebrew/") != std::string::npos ||
+                        dylib_path.find("/usr/local/opt/") != std::string::npos ||
+                        dylib_path.find("Cellar/") != std::string::npos) {
+                        
+                        std::string target_file_name = fs::path(dylib_path).filename().string();
+                        std::string new_path = prefix + "/lib/" + target_file_name;
+                        
+                        std::string change_out;
+                        run_capturing_output("/usr/bin/install_name_tool -change '" + dylib_path + "' '" + new_path + "' '" + file + "' 2>/dev/null", change_out);
+                    }
+                }
+            }
+
+            // Re-sign the binary after modifying load commands. This is mandatory on Apple Silicon.
+            std::string codesign_out;
+            run_capturing_output("/usr/bin/codesign --sign - --force --preserve-metadata=identifier,entitlements,flags '" + file + "' 2>/dev/null", codesign_out);
+        }
     }
 }
 
@@ -151,8 +201,10 @@ bool Installer::atomic_commit(const std::string& stage_dir, const std::string& f
             fs::rename(entry.path(), target_path, ec);
             if (ec) {
                 // Move fallback block via cp -a and rm in case of cross-device links
-                std::string cmd = "cp -a '" + entry.path().string() + "' '" + target_path.string() + "' && rm -f '" + entry.path().string() + "'";
-                system(cmd.c_str());
+                if (run_exec("/bin/cp", {"-a", entry.path().string(), target_path.string()}) == 0) {
+                    std::error_code rm_ec;
+                    fs::remove(entry.path(), rm_ec);
+                }
             }
         }
         // Cleanup stage
@@ -225,6 +277,7 @@ bool Installer::install_package(const Package& pkg, const std::string& reason) {
         // Deploy to Stage
         build_success = brew.install_bottle(tarball_path, stage_dir, installed.installed_files);
         if (build_success) {
+            fix_macho_rpaths(stage_dir);
             // Atomic move stage to prefix
             colors::print_substatus("Atomically finalizing installation...");
             if (atomic_commit(stage_dir, get_prefix())) {
