@@ -77,6 +77,8 @@ bool Transaction::install_multiple(const std::vector<std::string>& packages) {
     }
 
     bool all_success = true;
+    std::vector<Package> installed_in_this_transaction;
+
     for (const auto& pkg : unique_to_install) {
         colors::print_status("Installing " + pkg.name + " " + pkg.version + "...");
         
@@ -88,8 +90,21 @@ bool Transaction::install_multiple(const std::vector<std::string>& packages) {
         if (!installer_.install_package(pkg, is_explicit ? "explicit" : "dependency")) {
             colors::print_error("Failed to install: " + pkg.name);
             all_success = false;
+            
+            // Transaction Rollback: Cleanup packages installed in this batch if one fails
+            colors::print_warning("Installation failed. Rolling back transaction (" + 
+                                  std::to_string(installed_in_this_transaction.size()) + " packages)...");
+            
+            // Reverse order rollback
+            for (auto it = installed_in_this_transaction.rbegin(); it != installed_in_this_transaction.rend(); ++it) {
+                remover_.remove_package(*it);
+            }
+            colors::print_substatus("Dependencies removed.");
+            
             break; // Stop on first failure in batch
         }
+        
+        installed_in_this_transaction.push_back(pkg);
         colors::print_success(pkg.name + " " + pkg.version + " installed successfully");
     }
 

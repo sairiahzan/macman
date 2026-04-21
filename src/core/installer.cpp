@@ -216,6 +216,35 @@ bool Installer::atomic_commit(const std::string& stage_dir, const std::string& f
     }
 }
 
+bool Installer::link_to_prefix(const std::string& pkg_dir, std::vector<std::string>& installed_files) const {
+    std::string prefix = get_prefix();
+    
+    try {
+        for (auto const& entry : fs::recursive_directory_iterator(pkg_dir)) {
+            if (entry.is_directory()) continue;
+
+            auto rel_path = fs::relative(entry.path(), pkg_dir);
+            auto target_path = fs::path(prefix) / rel_path;
+
+            // Skip common metadata files (INSTALL_RECEIPT, etc)
+            if (rel_path.string().find("INSTALL_RECEIPT") != std::string::npos) continue;
+
+            fs::create_directories(target_path.parent_path());
+            
+            if (fs::exists(target_path) || fs::is_symlink(target_path)) {
+                fs::remove(target_path);
+            }
+
+            fs::create_symlink(entry.path(), target_path);
+            installed_files.push_back(target_path.string());
+        }
+        return true;
+    } catch (const std::exception& e) {
+        colors::print_error("Failed to link package: " + std::string(e.what()));
+        return false;
+    }
+}
+
 bool Installer::install_package(const Package& pkg, const std::string& reason) {
     Package installed = pkg;
     installed.install_reason = reason;
@@ -226,23 +255,29 @@ bool Installer::install_package(const Package& pkg, const std::string& reason) {
     std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", std::localtime(&now));
     installed.install_date = buf;
     
+    // Final opt directory: ~/.macman/opt/<name>
+    std::string opt_dir = get_prefix() + "/opt/" + pkg.name;
+    if (fs::exists(opt_dir)) fs::remove_all(opt_dir);
+    fs::create_directories(opt_dir);
+
     // Stage directory
     std::string stage_dir = get_cache_dir() + "/stage_" + pkg.name;
     if (fs::exists(stage_dir)) fs::remove_all(stage_dir);
     fs::create_directories(stage_dir);
 
     bool build_success = false;
+    std::vector<std::string> stage_files;
     
     if (pkg.source == PackageSource::AUR) {
         colors::print_status("Sources found in Arch Linux AUR. Compiling natively for macOS...");
-        // Build from AUR source using stage_dir as DESTDIR substitute
-        // The AURBackend currently expects to install straight to get_prefix().
-        // For actual atomic installs, we need AURBackend to deploy to staging.
-        // For now, we simulate success by forwarding to get_prefix() directly until Phase 4 Backend refactor.
+        // AURBackend normally deploys straight to prefix, we need to pass opt_dir as prefix
         AURBackend aur;
-        build_success = aur.build_and_install(pkg.name, get_prefix(), installed.installed_files);
-        if (build_success) fix_macho_rpaths(get_prefix());
-        
+        build_success = aur.build_and_install(pkg.name, opt_dir, stage_files);
+        if (build_success) {
+            fix_macho_rpaths(opt_dir);
+            // Now link from opt to global prefix
+            build_success = link_to_prefix(opt_dir, installed.installed_files);
+        }
     } else {
         colors::print_substatus("Found native macOS binary in Homebrew. Installing " + pkg.name + "...");
         // Brew Bottle branch
@@ -274,14 +309,15 @@ bool Installer::install_package(const Package& pkg, const std::string& reason) {
         }
 
         HomebrewBackend brew;
-        // Deploy to Stage
-        build_success = brew.install_bottle(tarball_path, stage_dir, installed.installed_files);
+        // Deploy to Stage first (bottle contains full /usr/local structure)
+        build_success = brew.install_bottle(tarball_path, stage_dir, stage_files);
         if (build_success) {
             fix_macho_rpaths(stage_dir);
-            // Atomic move stage to prefix
-            colors::print_substatus("Atomically finalizing installation...");
-            if (atomic_commit(stage_dir, get_prefix())) {
-                build_success = true;
+            
+            // Move from stage to opt_dir
+            if (atomic_commit(stage_dir, opt_dir)) {
+                // Link from opt to global prefix
+                build_success = link_to_prefix(opt_dir, installed.installed_files);
             } else {
                 build_success = false;
             }
@@ -292,11 +328,14 @@ bool Installer::install_package(const Package& pkg, const std::string& reason) {
     if (fs::exists(stage_dir)) fs::remove_all(stage_dir);
 
     if (build_success) {
+        // Record both the symlinks AND the opt directory itself
+        installed.installed_files.push_back(opt_dir);
         db_.add_package(installed);
         return true;
     }
     return false;
 }
+
 
 
 // ─────────────────────────────────────────────────────────────────────────────

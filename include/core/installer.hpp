@@ -29,6 +29,9 @@ public:
     // Installs a fully resolved package (handles stages & atomic commit)
     bool install_package(const Package& pkg, const std::string& reason);
 
+    // Links a keg-only package from /opt to global prefix using symlinks
+    bool link_to_prefix(const std::string& pkg_dir, std::vector<std::string>& installed_files) const;
+
     // Atomic move wrapper
     bool atomic_commit(const std::string& stage_dir, const std::string& final_dir) const;
 
