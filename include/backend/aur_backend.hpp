@@ -31,6 +31,7 @@ struct PKGBUILDInfo {
     std::string pkgdesc;
     std::string url;
     std::vector<std::string> source;        // Source URLs
+    std::vector<std::string> sha256sums;    // SHA256 checksums
     std::vector<std::string> depends;       // Runtime deps
     std::vector<std::string> makedepends;   // Build deps
     std::string build_commands;             // Extracted build() function

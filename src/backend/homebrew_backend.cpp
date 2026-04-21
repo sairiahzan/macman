@@ -243,9 +243,27 @@ Package HomebrewBackend::parse_formula(const nlohmann::json& formula, bool resol
         }
     }
 
-    // Bottle URL — only resolve when needed (download time), skip during search
+    // Bottle URL and SHA-256 — only resolve when needed (download time), skip during search
     if (resolve_bottle_url) {
         pkg.url = get_bottle_url(formula);
+        
+        // Extract SHA-256 specifically for MITM protection
+        if (formula.contains("bottle") && formula["bottle"].is_object()) {
+            const auto& bottle = formula["bottle"];
+            if (bottle.contains("stable") && bottle["stable"].is_object()) {
+                const auto& stable = bottle["stable"];
+                if (stable.contains("files") && stable["files"].is_object()) {
+                    std::string macos_ver = detect_macos_version();
+                    const auto& files = stable["files"];
+                    
+                    if (files.contains(macos_ver)) {
+                        pkg.sha256 = files[macos_ver].value("sha256", "");
+                    } else if (files.contains("all")) {
+                        pkg.sha256 = files["all"].value("sha256", "");
+                    }
+                }
+            }
+        }
     }
 
     return pkg;

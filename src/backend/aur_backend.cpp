@@ -215,6 +215,8 @@ echo "${url}"
 
 echo "SOURCE"
 for s in "${source[@]}"; do echo "$s"; done
+echo "SHA256SUMS"
+for s in "${sha256sums[@]}"; do echo "$s"; done
 echo "DEPENDS"
 for d in "${depends[@]}"; do echo "$d"; done
 echo "MAKEDEPENDS"
@@ -247,7 +249,7 @@ echo "END"
     for (const auto& line : lines) {
         if (line == "PKGNAME" || line == "PKGVER" || line == "PKGREL" || 
             line == "PKGDESC" || line == "URL" || line == "SOURCE" || 
-            line == "DEPENDS" || line == "MAKEDEPENDS" || line == "END") {
+            line == "SHA256SUMS" || line == "DEPENDS" || line == "MAKEDEPENDS" || line == "END") {
             current_state = line;
             continue;
         }
@@ -258,6 +260,7 @@ echo "END"
         else if (current_state == "PKGDESC") info.pkgdesc = line;
         else if (current_state == "URL") info.url = line;
         else if (current_state == "SOURCE") info.source.push_back(line);
+        else if (current_state == "SHA256SUMS") info.sha256sums.push_back(line);
         else if (current_state == "DEPENDS") info.depends.push_back(line);
         else if (current_state == "MAKEDEPENDS") info.makedepends.push_back(line);
     }
@@ -472,6 +475,39 @@ bool AURBackend::download_sources(const PKGBUILDInfo& info, const std::string& w
         if (ret != 0) {
             colors::print_error("Failed to download or clone: " + raw_url);
             return false;
+        }
+
+        // --- MITM Protection: SHA-256 Verification ---
+        // Match current source index with sha256sums index (makepkg behavior)
+        size_t idx = &src - &info.source[0];
+        if (idx < info.sha256sums.size() && info.sha256sums[idx] != "SKIP" && !info.sha256sums[idx].empty()) {
+            std::string downloaded_file = (custom_name.empty() ? fs::path(raw_url).filename().string() : custom_name);
+            std::string file_path = work_dir + "/" + downloaded_file;
+
+            colors::print_substatus("Verifying SHA-256 for: " + downloaded_file);
+            std::string expected_sha = info.sha256sums[idx];
+            
+            // Re-use system shasum for verification
+            std::string check_cmd = "shasum -a 256 \"" + file_path + "\" | awk '{print $1}'";
+            FILE* p = popen(check_cmd.c_str(), "r");
+            if (p) {
+                char buf[128];
+                if (fgets(buf, sizeof(buf), p) != nullptr) {
+                    std::string actual_sha = buf;
+                    if (!actual_sha.empty() && actual_sha.back() == '\n') actual_sha.pop_back();
+                    
+                    if (actual_sha != expected_sha) {
+                        colors::print_error("SECURITY ALERT: Checksum mismatch for " + downloaded_file);
+                        colors::print_error("Expected: " + expected_sha);
+                        colors::print_error("Got:      " + actual_sha);
+                        colors::print_error("Possible Man-in-the-Middle (MITM) attack or corrupted download.");
+                        pclose(p);
+                        return false;
+                    }
+                }
+                pclose(p);
+            }
+            colors::print_success("Checksum verified.");
         }
     }
 
