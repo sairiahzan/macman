@@ -1,4 +1,4 @@
-// downloader.cpp — Multi-File Download Manager Implementation [V1.1.0 Patch]
+// downloader.cpp — Multi-File Download Manager Implementation [V1.2.0 Patch]
 // Coordinates downloads with caching, progress bar integration, and
 // sequential/parallel execution modes.
 

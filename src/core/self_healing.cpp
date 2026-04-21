@@ -1,4 +1,4 @@
-// self_healing.cpp — macOS Build Self-Healing Engine Implementation [V1.1.0 Patch]
+// self_healing.cpp — macOS Build Self-Healing Engine Implementation [V1.2.0 Patch]
 
 #include "core/self_healing.hpp"
 #include "cli/colors.hpp"

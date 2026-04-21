@@ -1,4 +1,4 @@
-// self_healing.hpp — macOS Build Self-Healing Engine [V1.1.0 Patch]
+// self_healing.hpp — macOS Build Self-Healing Engine [V1.2.0 Patch]
 // Captures build output, matches ~20 known Linux→macOS error patterns,
 // auto-patches source files and compiler flags, retries builds.
 

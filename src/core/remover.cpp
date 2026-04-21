@@ -1,4 +1,4 @@
-// remover.cpp [V1.1.0 Patch]
+// remover.cpp [V1.2.0 Patch]
 
 #include "core/remover.hpp"
 #include "core/resolver.hpp"
@@ -18,12 +18,15 @@ bool Remover::remove_package(const Package& pkg) const {
     bool all_success = true;
 
     for (const auto& file : pkg.installed_files) {
-        fs::path p = fs::path(get_prefix()) / file;
+        // file is already an absolute path (including prefix)
+        fs::path p(file);
         try {
-            if (fs::exists(p)) {
-                // If directory, only delete if empty
+            if (fs::exists(p) || fs::is_symlink(p)) {
                 if (fs::is_directory(p)) {
-                    if (fs::is_empty(p)) {
+                    // For our /opt/<pkg> directories, we want to remove everything inside
+                    if (p.string().find("/opt/" + pkg.name) != std::string::npos) {
+                        fs::remove_all(p);
+                    } else if (fs::is_empty(p)) {
                         fs::remove(p);
                     }
                 } else {

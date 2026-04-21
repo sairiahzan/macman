@@ -1,4 +1,4 @@
-// homebrew_backend.hpp — Homebrew Formulae API Integration [V1.1.0 Patch]
+// homebrew_backend.hpp — Homebrew Formulae API Integration [V1.2.0 Patch]
 // Backend that interfaces with Homebrew's public JSON API to search,
 // fetch info, and download prebuilt bottles for macOS packages.
 // Primary package source — tried before AUR fallback.

@@ -1,4 +1,4 @@
-// package.cpp — Package Struct Implementation [V1.1.0 Patch]
+// package.cpp — Package Struct Implementation [V1.2.0 Patch]
 // Implements JSON serialization/deserialization, version comparison,
 // and human-readable formatting for the Package data structure.
 

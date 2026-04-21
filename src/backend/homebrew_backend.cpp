@@ -1,4 +1,4 @@
-// homebrew_backend.cpp — Homebrew Formulae API Backend Implementation [V1.1.0 Patch]
+// homebrew_backend.cpp — Homebrew Formulae API Backend Implementation [V1.2.0 Patch]
 // Interfaces with Homebrew's public JSON API to search, fetch info, and
 // download prebuilt bottles. Primary source for macOS packages.
 // Performance improvements over v1:

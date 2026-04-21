@@ -1,4 +1,4 @@
-// aur_backend.cpp — Arch User Repository Source Builder Implementation [V1.1.0 Patch]
+// aur_backend.cpp — Arch User Repository Source Builder Implementation [V1.2.0 Patch]
 // Fallback backend: queries AUR RPC API, downloads PKGBUILDs, and
 // compiles packages from source using system clang for native Mach-O.
 // v2 improvements:
@@ -571,12 +571,28 @@ bool AURBackend::compile_source(const PKGBUILDInfo& info, const std::string& wor
         safe_prefix = macman::get_prefix();
     }
 
-    extra_cflags += std::string(" -I") + safe_prefix + "/include";
-    extra_cflags += std::string(" -I") + safe_prefix + "/include/ext2fs";
-    extra_cflags += std::string(" -I") + safe_prefix + "/include/et";
+    // Global macman prefix (where symlinks for dependencies are located)
+    std::string global_prefix = macman::get_prefix();
+
+    // Include paths for both the target opt-prefix and the global prefix
+    extra_cflags += std::string(" -I") + global_prefix + "/include";
+    if (safe_prefix != global_prefix) {
+        extra_cflags += std::string(" -I") + safe_prefix + "/include";
+    }
     
-    extra_ldflags += std::string(" -L") + safe_prefix + "/lib";
-    extra_pkgconfig += std::string(":") + safe_prefix + "/lib/pkgconfig";
+    extra_cflags += std::string(" -I") + global_prefix + "/include/ext2fs";
+    extra_cflags += std::string(" -I") + global_prefix + "/include/et";
+    
+    // Library paths for both
+    extra_ldflags += std::string(" -L") + global_prefix + "/lib";
+    if (safe_prefix != global_prefix) {
+        extra_ldflags += std::string(" -L") + safe_prefix + "/lib";
+    }
+    
+    extra_pkgconfig += std::string(":") + global_prefix + "/lib/pkgconfig";
+    if (safe_prefix != global_prefix) {
+        extra_pkgconfig += std::string(":") + safe_prefix + "/lib/pkgconfig";
+    }
 
     // e2fsprogs keg-only libs needed when installed via macman prefix
     if (extra_libs.find("-lcom_err") == std::string::npos) {

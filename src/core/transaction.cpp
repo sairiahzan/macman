@@ -1,4 +1,4 @@
-// transaction.cpp [V1.1.0 Patch]
+// transaction.cpp [V1.2.0 Patch]
 
 #include "core/transaction.hpp"
 #include "backend/homebrew_backend.hpp"
@@ -104,7 +104,11 @@ bool Transaction::install_multiple(const std::vector<std::string>& packages) {
             break; // Stop on first failure in batch
         }
         
-        installed_in_this_transaction.push_back(pkg);
+        // Fetch the updated package (with installed_files) from DB for accurate rollback if needed later
+        auto updated_pkg = db_.get_package(pkg.name);
+        if (updated_pkg) {
+            installed_in_this_transaction.push_back(*updated_pkg);
+        }
         colors::print_success(pkg.name + " " + pkg.version + " installed successfully");
     }
 

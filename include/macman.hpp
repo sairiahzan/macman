@@ -1,4 +1,4 @@
-// macman.hpp — Global Constants, Version Info, and System Paths [V1.1.0 Patch]
+// macman.hpp — Global Constants, Version Info, and System Paths [V1.2.0 Patch]
 // Central header that defines all compile-time constants used across macman.
 // Includes version string, directory paths, API endpoints, and branding.
 
@@ -13,7 +13,7 @@ namespace macman {
 
 // --- Version & Branding ---
 
-constexpr const char* VERSION       = "1.1.0";
+constexpr const char* VERSION       = "1.2.0";
 constexpr const char* PROGRAM_NAME  = "macman";
 constexpr const char* DESCRIPTION   = "The blazing-fast package manager for macOS";
 
