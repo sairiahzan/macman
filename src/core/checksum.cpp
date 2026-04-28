@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // checksum.cpp — Shell-Free SHA-256 Implementation
 
 #include "core/checksum.hpp"

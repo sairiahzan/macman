@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // http_client.cpp — libcurl HTTP Client Implementation [V1.2.0 Patch]
 // Implements HTTP GET, JSON fetching, and file downloads using libcurl.
 // Provides connection reuse, progress callbacks, and proper error handling.
@@ -41,7 +42,7 @@ void http_global_cleanup() {
 HttpClient::HttpClient() 
     : curl_handle_(nullptr), 
       timeout_(HTTP_TIMEOUT_SECONDS),
-      user_agent_(std::string(PROGRAM_NAME) + "/" + VERSION) {
+      user_agent_("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36") {
     curl_handle_ = curl_easy_init();
 }
 
@@ -59,7 +60,8 @@ void HttpClient::setup_common(CURL* handle, const std::string& url) {
     curl_easy_setopt(handle, CURLOPT_TIMEOUT, (long)timeout_);
     curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(handle, CURLOPT_MAXREDIRS, 5L);
+    curl_easy_setopt(handle, CURLOPT_AUTOREFERER, 1L);
+    curl_easy_setopt(handle, CURLOPT_MAXREDIRS, 10L);
     curl_easy_setopt(handle, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(handle, CURLOPT_ACCEPT_ENCODING, ""); // Accept all encodings
 }

@@ -1,4 +1,5 @@
 #!/bin/bash
+# Arda Yiğit - Hazani
 # fix_permissions.sh — Resolve ownership issues for macman
 
 MACMAN_DIR="$HOME/.macman"

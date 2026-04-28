@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // installer.cpp [V1.2.0 Patch]
 // Self-Healing Compilation Engine added in V1.2.0:
 //   run_capturing_output  — posix_spawn stderr capture
@@ -14,6 +15,7 @@
 #include "cli/colors.hpp"
 #include "core/process.hpp"
 #include <iostream>
+#include <csignal>
 #include <fstream>
 #include <sstream>
 #include <filesystem>
@@ -196,7 +198,14 @@ bool Installer::link_to_prefix(const std::string& pkg_dir, std::vector<std::stri
             if (entry.is_directory()) continue;
 
             auto rel_path = fs::relative(entry.path(), pkg_dir);
-            auto target_path = fs::path(prefix) / rel_path;
+            std::string rel_str = rel_path.string();
+            
+            // Strip "usr/" from the beginning so binaries go to bin/ instead of usr/bin/
+            if (rel_str.find("usr/") == 0) {
+                rel_str = rel_str.substr(4);
+            }
+            
+            auto target_path = fs::path(prefix) / rel_str;
 
             // Skip common metadata files (INSTALL_RECEIPT, etc)
             if (rel_path.string().find("INSTALL_RECEIPT") != std::string::npos) continue;
@@ -218,6 +227,10 @@ bool Installer::link_to_prefix(const std::string& pkg_dir, std::vector<std::stri
 }
 
 bool Installer::install_package(const Package& pkg, const std::string& reason) {
+    if (pkg.version == "macOS-system-stub") {
+        colors::print_substatus("Using macOS system provider for " + pkg.name);
+        return true;
+    }
     Package installed = pkg;
     installed.install_reason = reason;
 
@@ -244,8 +257,13 @@ bool Installer::install_package(const Package& pkg, const std::string& reason) {
         colors::print_status("Sources found in Arch Linux AUR. Compiling natively for macOS...");
         // AURBackend normally deploys straight to prefix, we need to pass opt_dir as prefix
         AURBackend aur;
-        build_success = aur.build_and_install(pkg.name, opt_dir, stage_files);
+        std::string actual_version;
+        build_success = aur.build_and_install(pkg.name, opt_dir, stage_files, actual_version);
         if (build_success) {
+            if (!actual_version.empty() && actual_version != installed.version) {
+                colors::print_substatus("Dynamic version detected: " + actual_version);
+                installed.version = actual_version;
+            }
             fix_macho_rpaths(opt_dir);
             // Now link from opt to global prefix
             build_success = link_to_prefix(opt_dir, installed.installed_files);
@@ -260,7 +278,17 @@ bool Installer::install_package(const Package& pkg, const std::string& reason) {
 
         std::string tarball_path = get_cache_dir() + "/" + pkg.name + "-" + pkg.version + ".tar.gz";
 
-        if (!fs::exists(tarball_path)) {
+        // Check if file exists AND is not empty (at least 100 bytes for a valid tarball)
+        bool cache_valid = false;
+        if (fs::exists(tarball_path)) {
+            if (fs::file_size(tarball_path) > 100) {
+                cache_valid = true;
+            } else {
+                fs::remove(tarball_path);
+            }
+        }
+
+        if (!cache_valid) {
             Downloader dl;
             DownloadTask task;
             task.url = pkg.url;
@@ -305,9 +333,13 @@ bool Installer::install_package(const Package& pkg, const std::string& reason) {
 
     if (build_success) {
         // Record both the symlinks AND the opt directory itself
+        // This ensures the entire opt folder is removed on uninstall or rollback
         installed.installed_files.push_back(opt_dir);
         db_.add_package(installed);
         return true;
+    } else {
+        // Cleanup if installation failed or was aborted
+        if (fs::exists(opt_dir)) fs::remove_all(opt_dir);
     }
     return false;
 }
@@ -324,6 +356,17 @@ int Installer::run_capturing_output(const std::string& cmd, std::string& output)
 
     posix_spawn_file_actions_t fa;
     posix_spawn_file_actions_init(&fa);
+    
+    // Create a dummy pipe to use as a non-interactive stdin
+    int pipefds[2];
+    if (pipe(pipefds) == 0) {
+        posix_spawn_file_actions_adddup2(&fa, pipefds[0], STDIN_FILENO);
+        posix_spawn_file_actions_addclose(&fa, pipefds[0]);
+        posix_spawn_file_actions_addclose(&fa, pipefds[1]);
+    } else {
+        posix_spawn_file_actions_addopen(&fa, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+    }
+
     posix_spawn_file_actions_addopen(&fa, STDOUT_FILENO, log_path.c_str(),
                                      O_WRONLY | O_CREAT | O_TRUNC, 0644);
     posix_spawn_file_actions_adddup2(&fa, STDOUT_FILENO, STDERR_FILENO);
@@ -334,10 +377,18 @@ int Installer::run_capturing_output(const std::string& cmd, std::string& output)
                               (char* const*)argv, MACMAN_ENVIRON);
     posix_spawn_file_actions_destroy(&fa);
 
+    if (pipefds[0] != -1) {
+        close(pipefds[0]);
+        close(pipefds[1]);
+    }
+
     if (status == 0) {
         int ws;
-        waitpid(pid, &ws, 0);
-        status = WIFEXITED(ws) ? WEXITSTATUS(ws) : -1;
+        if (waitpid(pid, &ws, 0) != -1) {
+            status = WIFEXITED(ws) ? WEXITSTATUS(ws) : -1;
+        } else {
+            status = -1;
+        }
     } else {
         status = -1;
     }
@@ -483,6 +534,26 @@ bool Installer::analyze_and_fix_compile_errors(const std::string& log,
         return true;
     };
 
+    // Filter log to only lines containing keywords to speed up regex matching
+    std::string error_log;
+    {
+        std::istringstream ss(log);
+        std::string line;
+        while (std::getline(ss, line)) {
+            std::string lower_line = line;
+            std::transform(lower_line.begin(), lower_line.end(), lower_line.begin(), ::tolower);
+            if (lower_line.find("error") != std::string::npos || 
+                lower_line.find("not found") != std::string::npos ||
+                lower_line.find("undeclared") != std::string::npos ||
+                lower_line.find("referenced from") != std::string::npos ||
+                lower_line.find("unknown") != std::string::npos ||
+                lower_line.find("unsupported") != std::string::npos ||
+                lower_line.find("undefined") != std::string::npos) {
+                error_log += line + "\n";
+            }
+        }
+    }
+
     // ── [1] Missing headers ──────────────────────────────────────────────────
     // Clang: fatal error: 'X' file not found
     // GCC:   fatal error: X: No such file or directory
@@ -492,7 +563,7 @@ bool Installer::analyze_and_fix_compile_errors(const std::string& log,
 
         std::set<std::string> missing;
         for (auto& re : {re1, re2})
-            for (std::sregex_iterator it(log.begin(), log.end(), re);
+            for (std::sregex_iterator it(error_log.begin(), error_log.end(), re);
                  it != std::sregex_iterator{}; ++it)
                 missing.insert((*it)[1].str());
 
@@ -624,7 +695,7 @@ bool Installer::analyze_and_fix_compile_errors(const std::string& log,
     {
         std::regex re(R"((?:use of undeclared identifier|undeclared identifier|implicit declaration of function) '([^']+)')");
         std::set<std::string> syms;
-        for (std::sregex_iterator it(log.begin(), log.end(), re);
+        for (std::sregex_iterator it(error_log.begin(), error_log.end(), re);
              it != std::sregex_iterator{}; ++it)
             syms.insert((*it)[1].str());
 
@@ -740,22 +811,72 @@ bool Installer::analyze_and_fix_compile_errors(const std::string& log,
         }
     }
 
-    // ── [3] Linker: library not found ────────────────────────────────────────
+    // ── [3] Linker: library not found or undefined symbols ──────────────────
     {
         // macOS ld: "library not found for -lFOO"
-        std::regex re(R"(library not found for -l(\S+))");
+        std::regex re_lib("library not found for -l(\\S+)");
+        // undefined symbol: "_libintl_setlocale" or "_libintl_setlocale", referenced from:
+        std::regex re_sym("undefined symbol: \"?(_\\S+)\"?");
+        std::regex re_sym2("\"?(_\\S+)\"?, referenced from:");
+        std::regex re_sym3("symbol\\(s\\) not found.*$"); // Trigger for general symbol check
+
         static const std::set<std::string> noop_libs = {
             "rt", "dl", "pthread", "resolv", "atomic", "m" /* libm is in libSystem */
         };
 
-        std::set<std::string> seen;
-        for (std::sregex_iterator it(log.begin(), log.end(), re);
+        // Symbol to library mapping
+        static const std::map<std::string, std::string> sym_to_lib = {
+            {"libintl_setlocale", "intl"},
+            {"libintl_gettext", "intl"},
+            {"libintl_textdomain", "intl"},
+            {"iconv_open", "iconv"},
+            {"iconv_close", "iconv"},
+            {"iconv", "iconv"},
+            {"inflate", "z"},
+            {"deflate", "z"}
+        };
+
+        std::set<std::string> seen_libs;
+        for (std::sregex_iterator it(error_log.begin(), error_log.end(), re_lib);
              it != std::sregex_iterator{}; ++it) {
             std::string lib = (*it)[1].str();
-            if (!seen.insert(lib).second) continue;
+            if (!seen_libs.insert(lib).second) continue;
             if (noop_libs.count(lib)) {
                 colors::print_substatus("Self-healing: removing unsupported linker flag -l" + lib);
                 patch_build_flags(src_dir, "-l" + lib, "");
+                any_fix = true;
+            }
+        }
+
+        std::set<std::string> missing_libs;
+        auto check_sym = [&](std::string sym) {
+            if (sym.empty()) return;
+            if (sym[0] == '_') sym = sym.substr(1);
+            auto it = sym_to_lib.find(sym);
+            if (it != sym_to_lib.end()) {
+                missing_libs.insert(it->second);
+            }
+        };
+
+        for (std::sregex_iterator it(error_log.begin(), error_log.end(), re_sym); it != std::sregex_iterator{}; ++it)
+            check_sym((*it)[1].str());
+        for (std::sregex_iterator it(error_log.begin(), error_log.end(), re_sym2); it != std::sregex_iterator{}; ++it)
+            check_sym((*it)[1].str());
+
+        // Fallback: if we see general symbol error, scan the whole log for known problematic symbols
+        if (std::regex_search(error_log, re_sym3)) {
+            for (const auto& [sym, lib] : sym_to_lib) {
+                if (log.find(sym) != std::string::npos) {
+                    missing_libs.insert(lib);
+                }
+            }
+        }
+
+        for (const auto& lib : missing_libs) {
+            std::string flag = " -l" + lib;
+            if (extra_cflags.find(flag) == std::string::npos) {
+                colors::print_substatus("Self-healing: injecting missing library flag " + flag);
+                extra_cflags += flag;
                 any_fix = true;
             }
         }
@@ -768,13 +889,17 @@ bool Installer::analyze_and_fix_compile_errors(const std::string& log,
             "-Wl,--no-undefined",    "-Wl,--allow-shlib-undefined",
             "-Wl,-z,relro",          "-Wl,-z,now",
             "-Wl,--gc-sections",     "-Wl,-export-dynamic",
-            "-Wl,--version-script",
+            "-Wl,--version-script",  "-Wl,-soname",
         };
         for (const auto& opt : gnu_ld_opts) {
             // Apple ld prints "unknown option: --X" — check inner option name
-            std::string inner = opt.size() > 4 ? opt.substr(4) : opt;
-            if (log.find("unknown option") != std::string::npos &&
-                log.find(inner)            != std::string::npos) {
+            std::string inner = opt;
+            if (opt.find("-Wl,") == 0) inner = opt.substr(4);
+            
+            if ((log.find("unknown option") != std::string::npos &&
+                log.find(inner) != std::string::npos) || 
+                (log.find("unrecognized option") != std::string::npos && 
+                log.find(inner) != std::string::npos)) {
                 colors::print_substatus("Self-healing: removing GNU ld flag " + opt);
                 patch_build_flags(src_dir, opt, "");
                 any_fix = true;
@@ -782,7 +907,7 @@ bool Installer::analyze_and_fix_compile_errors(const std::string& log,
         }
     }
 
-    // ── [5] Unknown compiler flags ────────────────────────────────────────────
+    // ── [5] Unknown compiler flags / Missing tools ───────────────────────────
     {
         // clang: "unknown warning option '-Wfoo'"
         // clang: "error: unknown argument: '-ffoo'"
@@ -790,10 +915,11 @@ bool Installer::analyze_and_fix_compile_errors(const std::string& log,
         std::regex re_warn  (R"(unknown warning option '(-[^']+)')");
         std::regex re_arg   (R"(error: unknown argument: '(-[^']+)')");
         std::regex re_unsup (R"(unsupported option '(-[^']+)')");
+        std::regex re_notfound(R"(([^\s/]+): command not found)");
 
         std::set<std::string> bad_flags;
         for (auto& re : {re_warn, re_arg, re_unsup})
-            for (std::sregex_iterator it(log.begin(), log.end(), re);
+            for (std::sregex_iterator it(error_log.begin(), error_log.end(), re);
                  it != std::sregex_iterator{}; ++it)
                 bad_flags.insert((*it)[1].str());
 
@@ -802,13 +928,63 @@ bool Installer::analyze_and_fix_compile_errors(const std::string& log,
             patch_build_flags(src_dir, flag, "");
             any_fix = true;
         }
+
+        static const std::map<std::string, std::string> tool_to_brew = {
+            {"aclocal", "automake"},
+            {"automake", "automake"},
+            {"autoconf", "autoconf"},
+            {"autoheader", "autoconf"},
+            {"libtool", "libtool"},
+            {"glibtool", "libtool"},
+            {"pkg-config", "pkg-config"},
+            {"m4", "m4"},
+            {"bison", "bison"},
+            {"flex", "flex"},
+            {"gettext", "gettext"},
+            {"msgfmt", "gettext"}
+        };
+
+        for (std::sregex_iterator it(error_log.begin(), error_log.end(), re_notfound); it != std::sregex_iterator{}; ++it) {
+            std::string tool = (*it)[1].str();
+            auto it2 = tool_to_brew.find(tool);
+            if (it2 != tool_to_brew.end()) {
+                std::string brew_prefix = fs::exists("/opt/homebrew/bin") ? "/opt/homebrew" : "/usr/local";
+                if (!fs::exists(brew_prefix + "/bin/" + it2->second)) {
+                    colors::print_substatus("Self-healing: installing missing tool " + it2->second);
+                    setenv("HOMEBREW_NO_INTERACTIVE", "1", 1);
+                    run_exec(brew_prefix + "/bin/brew", {"install", "--formula", it2->second});
+                    any_fix = true;
+                }
+            }
+        }
+    }
+
+    // ── [6] VFS Mocking / Linux path redirection ─────────────────────────────
+    {
+        std::regex re_path("\"(/(?:proc|sys|etc)/\\S+)\"");
+        std::set<std::string> paths;
+        for (std::sregex_iterator it = std::sregex_iterator(error_log.begin(), error_log.end(), re_path); it != std::sregex_iterator{}; ++it)
+            paths.insert((*it)[1].str());
+
+        for (const auto& p : paths) {
+            if (p.find("/proc/cpuinfo") != std::string::npos) {
+                std::string fake_cpu = "/tmp/macman_cpuinfo";
+                if (!fs::exists(fake_cpu)) {
+                    std::ofstream f(fake_cpu);
+                    f << "processor\t: 0\nvendor_id\t: Apple\ncpu family\t: 6\nmodel\t\t: 0\nmodel name\t: Apple M-series\n";
+                }
+                append_if_new("#define MACMAN_FAKE_PROC_CPUINFO \"" + fake_cpu + "\"\n");
+                patch_build_flags(src_dir, p, "MACMAN_FAKE_PROC_CPUINFO");
+                any_fix = true;
+            }
+        }
     }
 
     // ── [6] CMake "Could NOT find <Package>" ─────────────────────────────────
     {
         std::regex re(R"(Could NOT find (\w[\w\-\.]+))");
         std::set<std::string> missing_pkgs;
-        for (std::sregex_iterator it(log.begin(), log.end(), re);
+        for (std::sregex_iterator it(error_log.begin(), error_log.end(), re);
              it != std::sregex_iterator{}; ++it)
             missing_pkgs.insert((*it)[1].str());
 
@@ -822,7 +998,7 @@ bool Installer::analyze_and_fix_compile_errors(const std::string& log,
     // ── [7] CMake: missing executable (sphinx, doxygen, …) ───────────────────
     {
         std::regex re(R"((?:sphinx-build|doxygen)[^'"\n]*(?:not found|NOTFOUND))");
-        if (std::regex_search(log, re)) {
+        if (std::regex_search(error_log, re)) {
             patch_cmake_remove_required(src_dir, "Sphinx");
             patch_cmake_remove_required(src_dir, "Doxygen");
             any_fix = true;

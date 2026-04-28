@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // process.hpp — Shell-Free Process Execution Utilities
 // Replaces all system() calls with direct posix_spawn binary execution.
 

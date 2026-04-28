@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // remover.hpp — Package Removal Engine [V1.2.0 Patch]
 // Handles safe deletion of files, cache cleaning, and the Nuke mechanism.
 

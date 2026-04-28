@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // database.hpp — Local Package Database Manager
 // Manages the JSON-based local package database that tracks all installed
 // packages, their versions, file lists, and install metadata. Supports

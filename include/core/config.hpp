@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // config.hpp — Configuration File Manager
 // Manages the macman configuration file (/usr/local/etc/macman.conf).
 // Provides read/write access to user-configurable settings like cache

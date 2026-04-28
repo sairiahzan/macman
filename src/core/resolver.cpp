@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // resolver.cpp [V1.2.0 Patch]
 
 #include "core/resolver.hpp"
@@ -23,6 +24,15 @@ std::string Resolver::strip_constraint(const std::string& raw_dep) const {
 
 Package Resolver::resolve_package(const std::string& raw_name) const {
     std::string name = strip_constraint(raw_name);
+
+    // Skip Linux-specific system dependencies on macOS
+    if (name == "glibc" || name == "linux-headers" || name == "base" || name == "gcc-libs") {
+        Package dummy;
+        dummy.name = name;
+        dummy.version = "macOS-system-stub";
+        dummy.source = PackageSource::LOCAL;
+        return dummy;
+    }
 
     // Common AUR to Homebrew dependency aliases
     if (name == "python" || name == "python3") name = "python@3.12";

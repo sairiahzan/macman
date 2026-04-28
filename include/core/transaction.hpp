@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // transaction.hpp — Install/Remove Transaction Handler [V1.2.0 Patch]
 // Orchestrates package installation and removal with dependency resolution,
 // user confirmation prompts, progress tracking, and rollback on failure.
@@ -26,7 +27,8 @@ public:
     ~Transaction() = default;
 
     bool install(const std::string& pkg_name, bool as_dependency = false);
-    bool install_multiple(const std::vector<std::string>& packages);
+    bool install_multiple(const std::vector<std::string>& packages, 
+                          TransactionType type = TransactionType::INSTALL);
     
     bool remove(const std::string& pkg_name, bool recursive = false);
     bool remove_multiple(const std::vector<std::string>& packages, bool recursive = false);

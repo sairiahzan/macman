@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // config.cpp — Configuration File Manager Implementation
 // Implements reading/writing of macman.conf, default generation, and
 // accessor methods for configuration values.

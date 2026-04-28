@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // transaction.cpp [V1.2.0 Patch]
 
 #include "core/transaction.hpp"
@@ -7,6 +8,9 @@
 #include "cli/colors.hpp"
 #include <iostream>
 #include <iomanip>
+#include <limits>
+#include <fcntl.h>
+#include <unistd.h>
 
 namespace macman {
 
@@ -55,7 +59,20 @@ bool Transaction::confirm_transaction(TransactionType type,
     std::string input;
     std::getline(std::cin, input);
 
-    return input.empty() || input == "Y" || input == "y" || input == "yes";
+    bool confirmed = input.empty() || input == "Y" || input == "y" || input == "yes";
+    
+    if (confirmed) {
+        // Forcefully redirect stdin to /dev/null at the FD level
+        int fd = open("/dev/null", O_RDONLY);
+        if (fd != -1) {
+            dup2(fd, STDIN_FILENO);
+            close(fd);
+        }
+        // Also update the C-level stdin just in case
+        (void)freopen("/dev/null", "r", stdin);
+    }
+
+    return confirmed;
 }
 
 bool Transaction::install(const std::string& pkg_name, bool as_dependency) {
@@ -63,7 +80,7 @@ bool Transaction::install(const std::string& pkg_name, bool as_dependency) {
     return install_multiple({pkg_name});
 }
 
-bool Transaction::install_multiple(const std::vector<std::string>& packages) {
+bool Transaction::install_multiple(const std::vector<std::string>& packages, TransactionType type) {
     if (packages.empty()) return true;
 
     colors::print_action("Resolving packages concurrently...");
@@ -78,7 +95,7 @@ bool Transaction::install_multiple(const std::vector<std::string>& packages) {
         total_size += p.download_size;
     }
 
-    if (!confirm_transaction(TransactionType::INSTALL, unique_to_install, total_size)) {
+    if (!confirm_transaction(type, unique_to_install, total_size)) {
         std::cout << "Transaction cancelled." << std::endl;
         return false;
     }
@@ -187,41 +204,47 @@ bool Transaction::upgrade_all() {
     }
 
     auto installed = db_.get_all_packages();
-    std::vector<Package> packages_to_upgrade;
+    if (installed.empty()) {
+        std::cout << " nothing to do (no packages installed)" << std::endl;
+        return true;
+    }
 
+    colors::print_status("Checking for package updates...");
+
+    // Parallel version check
+    std::vector<std::future<std::pair<std::string, bool>>> futures;
     for (const auto& pkg : installed) {
-        Package latest_pkg = resolver_.resolve_package(pkg.name);
-        if (!latest_pkg.version.empty() && 
-            Package::compare_versions(latest_pkg.version, pkg.version) > 0) {
-            packages_to_upgrade.push_back(latest_pkg);
+        futures.push_back(std::async(std::launch::async, [this, pkg]() {
+            Package latest = resolver_.resolve_package(pkg.name);
+            bool needs_upgrade = !latest.version.empty() && 
+                                Package::compare_versions(latest.version, pkg.version) > 0;
+            return std::make_pair(pkg.name, needs_upgrade);
+        }));
+    }
+
+    std::vector<std::string> targets_to_upgrade;
+    for (auto& f : futures) {
+        auto result = f.get();
+        if (result.second) {
+            targets_to_upgrade.push_back(result.first);
         }
     }
 
-    if (packages_to_upgrade.empty()) {
+    if (targets_to_upgrade.empty()) {
         std::cout << " there is nothing to do" << std::endl;
         return true;
     }
 
-    size_t total_size = 0;
-    for (const auto& p : packages_to_upgrade) total_size += p.download_size;
+    // Sort for consistent output
+    std::sort(targets_to_upgrade.begin(), targets_to_upgrade.end());
 
-    if (!confirm_transaction(TransactionType::UPGRADE, packages_to_upgrade, total_size)) {
-        std::cout << "Transaction cancelled." << std::endl;
-        return false;
-    }
-
-    bool all_success = true;
-    for (const auto& pkg : packages_to_upgrade) {
-        colors::print_status("Upgrading " + pkg.name + " to " + pkg.version + "...");
-        if (!installer_.install_package(pkg, pkg.install_reason)) {
-            colors::print_error("Failed to upgrade: " + pkg.name);
-            all_success = false;
-        } else {
-            colors::print_success(pkg.name + " upgraded successfully");
-        }
-    }
-
-    return all_success;
+    // Use install_multiple to handle resolution, dependencies, and atomic transaction
+    // We set a flag or handle confirmation specifically for upgrade if needed,
+    // but install_multiple is the most robust way to execute this.
+    
+    colors::print_action("Preparing upgrade for " + std::to_string(targets_to_upgrade.size()) + " packages...");
+    
+    return install_multiple(targets_to_upgrade, TransactionType::UPGRADE);
 }
 
 } // namespace macman

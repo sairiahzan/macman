@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // progress_bar.cpp — Pacman-Style Progress Bar Implementation [V1.2.0 Patch]
 // Renders a terminal progress bar that mimics pacman:
 // package-name     (42%) [########--------]  50.8 MiB / 110.3 MiB  2.5 MiB/s

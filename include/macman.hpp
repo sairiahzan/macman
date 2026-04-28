@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // macman.hpp — Global Constants, Version Info, and System Paths [V1.2.0 Patch]
 // Central header that defines all compile-time constants used across macman.
 // Includes version string, directory paths, API endpoints, and branding.
@@ -13,7 +14,7 @@ namespace macman {
 
 // --- Version & Branding ---
 
-constexpr const char* VERSION       = "1.2.0";
+constexpr const char* VERSION       = "1.0.0";
 constexpr const char* PROGRAM_NAME  = "macman";
 constexpr const char* DESCRIPTION   = "The blazing-fast package manager for macOS";
 
@@ -36,7 +37,7 @@ inline std::string get_macman_root() {
 }
 
 inline std::string get_prefix()       { return get_macman_root(); }
-inline std::string get_bin_dir()      { return get_macman_root() + "/bin"; }
+inline std::string get_bin_dir()      { return get_macman_root() + "/usr/bin"; }
 inline std::string get_config_file()  { return get_macman_root() + "/etc/macman.conf"; }
 inline std::string get_db_dir()       { return get_macman_root() + "/var"; }
 inline std::string get_local_db()     { return get_macman_root() + "/var/local.db"; }

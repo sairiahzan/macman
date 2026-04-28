@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // aur_backend.hpp — Arch User Repository Source Builder
 // Fallback backend for packages not available in Homebrew. Queries the
 // AUR RPC API, downloads PKGBUILDs, extracts source URLs, and compiles
@@ -64,9 +65,8 @@ public:
     // --- Build from Source ---
 
     bool build_and_install(const std::string& name, const std::string& install_prefix,
-                           std::vector<std::string>& installed_files);
-
-    // --- Availability Check ---
+                           std::vector<std::string>& installed_files,
+                           std::string& actual_version);
 
     bool has_package(const std::string& name);
 
@@ -83,7 +83,8 @@ private:
     // --- Result Cache (TTL-based) ---
 
     static constexpr int CACHE_TTL_SECONDS = 300;  // 5 minutes
-    static constexpr int MAX_BUILD_RETRIES = 5;
+    static constexpr int MAX_BUILD_RETRIES = 8;
+
 
     struct CachedPackage {
         Package pkg;
@@ -104,10 +105,11 @@ private:
     std::optional<PKGBUILDInfo> download_pkgbuild(const std::string& name);
     PKGBUILDInfo parse_pkgbuild(const std::string& pkgbuild_path) const;
 
-    bool download_sources(const PKGBUILDInfo& info, const std::string& work_dir);
+    bool download_sources(const PKGBUILDInfo& info, const std::string& work_dir, const std::string& repo_dir);
     bool compile_source(const PKGBUILDInfo& info, const std::string& work_dir,
                         const std::string& install_prefix,
-                        std::vector<std::string>& installed_files);
+                        std::vector<std::string>& installed_files,
+                        std::string& actual_version);
 
     std::vector<std::string> collect_installed_files(const std::string& prefix) const;
 

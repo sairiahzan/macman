@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // process.cpp — Shell-Free Process Execution Implementation
 // Uses posix_spawn to exec binaries directly without invoking /bin/sh.
 
@@ -44,6 +45,17 @@ int run_exec_capturing(const std::string& binary,
 
     posix_spawn_file_actions_t fa;
     posix_spawn_file_actions_init(&fa);
+    
+    // Create a dummy pipe to use as a non-interactive stdin
+    int pipefds[2] = {-1, -1};
+    if (pipe(pipefds) == 0) {
+        posix_spawn_file_actions_adddup2(&fa, pipefds[0], STDIN_FILENO);
+        posix_spawn_file_actions_addclose(&fa, pipefds[0]);
+        posix_spawn_file_actions_addclose(&fa, pipefds[1]);
+    } else {
+        posix_spawn_file_actions_addopen(&fa, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+    }
+
     posix_spawn_file_actions_addopen(&fa, STDOUT_FILENO, temp_log.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     posix_spawn_file_actions_adddup2(&fa, STDOUT_FILENO, STDERR_FILENO);
 
@@ -54,6 +66,11 @@ int run_exec_capturing(const std::string& binary,
     pid_t pid;
     int rc = posix_spawn(&pid, binary.c_str(), &fa, nullptr, c_argv.data(), MACMAN_ENVIRON);
     posix_spawn_file_actions_destroy(&fa);
+
+    if (pipefds[0] != -1) {
+        close(pipefds[0]);
+        close(pipefds[1]);
+    }
 
     if (rc == 0) {
         int ws;
@@ -101,6 +118,16 @@ int run_exec(const std::string& binary,
     posix_spawn_file_actions_t fa;
     posix_spawn_file_actions_init(&fa);
 
+    // Create a dummy pipe to use as a non-interactive stdin
+    int pipefds[2] = {-1, -1};
+    if (pipe(pipefds) == 0) {
+        posix_spawn_file_actions_adddup2(&fa, pipefds[0], STDIN_FILENO);
+        posix_spawn_file_actions_addclose(&fa, pipefds[0]);
+        posix_spawn_file_actions_addclose(&fa, pipefds[1]);
+    } else {
+        posix_spawn_file_actions_addopen(&fa, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+    }
+
     if (quiet) {
         posix_spawn_file_actions_addopen(&fa, STDOUT_FILENO,
                                           "/dev/null", O_WRONLY, 0);
@@ -116,6 +143,11 @@ int run_exec(const std::string& binary,
     int rc = posix_spawn(&pid, binary.c_str(), &fa, nullptr,
                           c_argv.data(), MACMAN_ENVIRON);
     posix_spawn_file_actions_destroy(&fa);
+
+    if (pipefds[0] != -1) {
+        close(pipefds[0]);
+        close(pipefds[1]);
+    }
 
     if (rc != 0) return -1;
 

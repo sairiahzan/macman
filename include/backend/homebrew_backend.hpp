@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // homebrew_backend.hpp — Homebrew Formulae API Integration [V1.2.0 Patch]
 // Backend that interfaces with Homebrew's public JSON API to search,
 // fetch info, and download prebuilt bottles for macOS packages.

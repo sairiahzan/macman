@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // remover.cpp [V1.2.0 Patch]
 
 #include "core/remover.hpp"

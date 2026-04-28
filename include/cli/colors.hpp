@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // colors.hpp — ANSI Color Codes and Terminal Formatting Utilities
 // Provides pacman-style terminal output formatting with colored text,
 // bold labels, status indicators, and structured message helpers.

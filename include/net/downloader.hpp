@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // downloader.hpp — Multi-File Download Manager
 // High-level download manager that coordinates file downloads with
 // caching, parallel execution, and integrated progress bar display.

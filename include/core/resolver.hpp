@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // resolver.hpp — Dependency Resolution & Engine [V1.2.0 Patch]
 // Orchestrates package queries, parallelized remote API lookups,
 // and resolves deep dependency trees including constraint mapping.

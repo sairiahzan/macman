@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // main.cpp — Macman Entry Point
 // Minimal entry point that initializes the system, parses arguments,
 // routes to the correct operation handler, and exits cleanly.
@@ -129,6 +130,14 @@ int main(int argc, char* argv[]) {
         }
         Transaction tx(db);
         tx.set_no_confirm(args.no_confirm);
+        
+        if (!args.no_confirm) {
+            // Confirmation happens inside install_multiple, which calls confirm_transaction
+        } else {
+            // If noconfirm is set, we can redirect stdin early
+            freopen("/dev/null", "r", stdin);
+        }
+
         if (!tx.install_multiple(args.targets)) {
             exit_code = 1;
         }

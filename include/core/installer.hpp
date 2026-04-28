@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // installer.hpp — Atomic Installation Orchestrator [V1.2.0 Patch]
 // Handles downloading, checksumming, staging, fixing RPATHs,
 // and atomically publishing the package to its final location.
@@ -46,7 +47,7 @@ public:
 private:
     Database& db_;
 
-    static constexpr int MAX_COMPILE_RETRIES = 4;
+    static constexpr int MAX_COMPILE_RETRIES = 8;
 
     // Spawns cmd via /bin/sh, redirects both stdout+stderr to a log file,
     // reads it back into `output`, and returns the exit code.

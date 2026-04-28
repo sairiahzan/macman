@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // package.cpp — Package Struct Implementation [V1.2.0 Patch]
 // Implements JSON serialization/deserialization, version comparison,
 // and human-readable formatting for the Package data structure.
@@ -14,22 +15,52 @@ namespace macman {
 int Package::compare_versions(const std::string& v1, const std::string& v2) {
     if (v1 == v2) return 0;
     
-    // Very basic semantic version comparison
-    int i = 0, j = 0;
-    while (i < v1.length() || j < v2.length()) {
-        int num1 = 0, num2 = 0;
-        while (i < v1.length() && v1[i] != '.') {
-            if (isdigit(v1[i])) num1 = num1 * 10 + (v1[i] - '0');
-            i++;
+    auto get_parts = [](const std::string& s) {
+        std::vector<std::string> parts;
+        std::string current;
+        for (char c : s) {
+            if (isalnum(c)) {
+                if (!current.empty() && (isdigit(current[0]) != isdigit(c))) {
+                    parts.push_back(current);
+                    current = "";
+                }
+                current += c;
+            } else {
+                if (!current.empty()) {
+                    parts.push_back(current);
+                    current = "";
+                }
+            }
         }
-        while (j < v2.length() && v2[j] != '.') {
-            if (isdigit(v2[j])) num2 = num2 * 10 + (v2[j] - '0');
-            j++;
+        if (!current.empty()) parts.push_back(current);
+        return parts;
+    };
+
+    auto p1 = get_parts(v1);
+    auto p2 = get_parts(v2);
+
+    size_t i = 0;
+    while (i < p1.size() && i < p2.size()) {
+        if (isdigit(p1[i][0]) && isdigit(p2[i][0])) {
+            try {
+                long long n1 = std::stoll(p1[i]);
+                long long n2 = std::stoll(p2[i]);
+                if (n1 > n2) return 1;
+                if (n1 < n2) return -1;
+            } catch (...) {
+                if (p1[i] > p2[i]) return 1;
+                if (p1[i] < p2[i]) return -1;
+            }
+        } else {
+            if (p1[i] > p2[i]) return 1;
+            if (p1[i] < p2[i]) return -1;
         }
-        if (num1 > num2) return 1;
-        if (num1 < num2) return -1;
-        i++; j++;
+        i++;
     }
+
+    if (p1.size() > p2.size()) return 1;
+    if (p1.size() < p2.size()) return -1;
+
     return 0;
 }
 

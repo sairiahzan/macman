@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // checksum.hpp — Shell-Free SHA-256 Verification Utility
 // Provides a centralized, secure way to verify file integrity using
 // native macOS shasum tool via posix_spawn. No shell pipes or popen.

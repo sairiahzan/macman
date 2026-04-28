@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // http_client.hpp — libcurl HTTP Client Wrapper [V1.2.0 Patch]
 // Thin C++ wrapper around libcurl providing simple GET requests, file
 // downloads with progress callbacks, connection reuse, and error handling.

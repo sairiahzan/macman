@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // downloader.cpp — Multi-File Download Manager Implementation [V1.2.0 Patch]
 // Coordinates downloads with caching, progress bar integration, and
 // sequential/parallel execution modes.

@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // progress_bar.hpp — Pacman-Style Progress Bar Renderer
 // Renders a terminal progress bar that mimics Arch Linux pacman's output:
 // package-name    (42%) [########--------]  50.8 MiB / 110.3 MiB  2.5 MiB/s

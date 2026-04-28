@@ -1,3 +1,4 @@
+// Arda Yiğit - Hazani
 // database.cpp — Local Package Database Implementation
 // JSON-based local database that stores all installed package metadata.
 // Supports CRUD operations, file ownership queries, and persistence.
