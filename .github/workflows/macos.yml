@@ -1,0 +1,33 @@
+name: macOS C++ CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up CMake
+      uses: jwlawson/actions-setup-cmake@v1.13
+      with:
+        cmake-version: 'latest'
+
+    - name: Configure CMake
+      # Configure CMake in a 'build' subdirectory.
+      run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build
+      # Build your program with the given configuration
+      run: cmake --build ${{github.workspace}}/build --config Release --parallel 4
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: macman-binary
+        path: ${{github.workspace}}/build/macman
