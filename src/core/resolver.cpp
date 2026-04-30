@@ -8,10 +8,11 @@
 #include "cli/colors.hpp"
 #include <iostream>
 #include <algorithm>
+#include <set>
 
 namespace macman {
 
-Resolver::Resolver(Database& db) : db_(db) {}
+Resolver::Resolver(Database& db) : db_(db), brew_() {}
 
 // Extract "sqlite" from "sqlite>=3.45.0"
 std::string Resolver::strip_constraint(const std::string& raw_dep) const {
@@ -22,10 +23,9 @@ std::string Resolver::strip_constraint(const std::string& raw_dep) const {
     return raw_dep;
 }
 
-Package Resolver::resolve_package(const std::string& raw_name) const {
+Package Resolver::resolve_package(const std::string& raw_name) {
     std::string name = strip_constraint(raw_name);
 
-    // Skip Linux-specific system dependencies on macOS
     if (name == "glibc" || name == "linux-headers" || name == "base" || name == "gcc-libs") {
         Package dummy;
         dummy.name = name;
@@ -34,18 +34,19 @@ Package Resolver::resolve_package(const std::string& raw_name) const {
         return dummy;
     }
 
-    // Common AUR to Homebrew dependency aliases
     if (name == "python" || name == "python3") name = "python@3.12";
     if (name == "nodejs" || name == "node") name = "node";
 
-    // Try Homebrew cache first (O(1) local hash map)
-    HomebrewBackend brew;
-    auto pkg = brew.get_info(name);
-    if (pkg) return *pkg;
+    auto pkg = brew_.get_info(name);
+    // If found locally but missing URL, we might need to check remote
+    if (pkg && pkg->source == PackageSource::HOMEBREW && pkg->url.empty()) {
+        // Fall through to remote check
+    } else if (pkg) {
+        return *pkg;
+    }
 
-    // Fetch from remotes concurrently
-    auto brew_future = std::async(std::launch::async, [&brew, name]() {
-        return brew.get_info_remote(name);
+    auto brew_future = std::async(std::launch::async, [this, name]() {
+        return brew_.get_info_remote(name);
     });
 
     auto aur_future = std::async(std::launch::async, [name]() {
@@ -55,20 +56,11 @@ Package Resolver::resolve_package(const std::string& raw_name) const {
 
     auto brew_pkg_remote = brew_future.get();
     if (brew_pkg_remote) {
-        if (brew_pkg_remote->download_size == 0 && !brew_pkg_remote->url.empty()) {
-            HttpClient http;
-            brew_pkg_remote->download_size = http.get_file_size(brew_pkg_remote->url);
-        }
         return *brew_pkg_remote;
     }
 
     auto aur_pkg = aur_future.get();
     if (aur_pkg) {
-        if (aur_pkg->download_size == 0) {
-            HttpClient http;
-            std::string snapshot_url = std::string(AUR_PACKAGE_BASE) + aur_pkg->name + ".tar.gz";
-            aur_pkg->download_size = http.get_file_size(snapshot_url);
-        }
         return *aur_pkg;
     }
 
@@ -78,87 +70,71 @@ Package Resolver::resolve_package(const std::string& raw_name) const {
     return empty;
 }
 
-bool Resolver::resolve_dependencies(const Package& pkg, std::vector<std::string>& resolved) const {
-    for (const auto& dep : pkg.dependencies) {
-        std::string clean_dep = strip_constraint(dep);
-
-        // Skip if already installed or in process
-        if (db_.is_installed(clean_dep)) continue;
-        if (std::find(resolved.begin(), resolved.end(), clean_dep) != resolved.end()) continue;
-
-        resolved.push_back(clean_dep);
-        
-        Package dep_pkg = resolve_package(clean_dep);
-        if (!dep_pkg.version.empty()) {
-            resolve_dependencies(dep_pkg, resolved);
+std::vector<Package> Resolver::resolve_all_concurrently(const std::vector<std::string>& targets) {
+    std::set<std::string> visited;
+    std::vector<std::string> queue;
+    
+    for (const auto& t : targets) {
+        std::string clean = strip_constraint(t);
+        if (visited.insert(clean).second) {
+            queue.push_back(clean);
         }
-    }
-    return true;
-}
-
-std::vector<Package> Resolver::resolve_all_concurrently(const std::vector<std::string>& targets) const {
-    std::vector<std::future<Package>> futures;
-    for (const auto& pkg_name : targets) {
-        futures.push_back(std::async(std::launch::async, [this, pkg_name]() {
-            return resolve_package(pkg_name);
-        }));
-    }
-
-    std::vector<Package> target_pkgs;
-    bool all_found = true;
-    for (size_t i = 0; i < futures.size(); ++i) {
-        Package pkg = futures[i].get();
-        if (pkg.version.empty()) {
-            colors::print_error("target not found: " + targets[i]);
-            all_found = false;
-        } else {
-            target_pkgs.push_back(pkg);
-        }
-    }
-    if (!all_found) return {};
-
-    std::vector<std::string> all_dep_names;
-    for (const auto& pkg : target_pkgs) {
-        resolve_dependencies(pkg, all_dep_names);
     }
 
     std::vector<Package> to_install;
-    if (!all_dep_names.empty()) {
-        std::vector<std::future<Package>> dep_futures;
-        for (const auto& dep_name : all_dep_names) {
-            dep_futures.push_back(std::async(std::launch::async, [this, dep_name]() {
-                return resolve_package(dep_name);
+    bool all_found = true;
+
+    while (!queue.empty()) {
+        std::vector<std::future<Package>> futures;
+        for (const auto& pkg_name : queue) {
+            futures.push_back(std::async(std::launch::async, [this, pkg_name]() {
+                return resolve_package(pkg_name);
             }));
         }
-        for (size_t i = 0; i < dep_futures.size(); ++i) {
-            Package dep = dep_futures[i].get();
-            if (dep.version.empty()) {
-                colors::print_warning("Dependency not found: " + all_dep_names[i] + " (skipping)");
+
+        std::vector<std::string> next_queue;
+        for (size_t i = 0; i < futures.size(); ++i) {
+            Package pkg = futures[i].get();
+            if (pkg.version.empty()) {
+                colors::print_error("target not found: " + queue[i]);
+                all_found = false;
             } else {
-                to_install.push_back(dep);
+                to_install.push_back(pkg);
+                
+                for (const auto& dep : pkg.dependencies) {
+                    std::string clean_dep = strip_constraint(dep);
+                    // Skip if already installed
+                    if (db_.is_installed(clean_dep)) continue;
+                    
+                    if (visited.insert(clean_dep).second) {
+                        next_queue.push_back(clean_dep);
+                    }
+                }
             }
         }
+        queue = std::move(next_queue);
     }
 
-    // Append targets
-    to_install.insert(to_install.end(), target_pkgs.begin(), target_pkgs.end());
+    if (!all_found) return {};
 
-    // Deduplicate
-    std::vector<Package> unique_to_install;
+    // Filter out already installed packages unless they were explicitly requested
+    std::vector<Package> final_install_list;
+    // Reverse the list so dependencies (which were added later to the queue) come FIRST
+    std::reverse(to_install.begin(), to_install.end());
+    
+    std::set<std::string> added;
     for (const auto& p : to_install) {
-        bool duplicate = false;
-        for (const auto& u : unique_to_install) {
-            if (u.name == p.name) { duplicate = true; break; }
-        }
+        if (added.count(p.name)) continue;
         bool is_target = std::find(targets.begin(), targets.end(), p.name) != targets.end();
-        if (!duplicate && (!db_.is_installed(p.name) || is_target)) {
-            unique_to_install.push_back(p);
+        if (!db_.is_installed(p.name) || is_target) {
+            final_install_list.push_back(p);
+            added.insert(p.name);
         }
     }
 
     // Concurrently fetch download sizes for packages that have URLs but size 0
     std::vector<std::future<void>> size_futures;
-    for (auto& p : unique_to_install) {
+    for (auto& p : final_install_list) {
         if (p.download_size == 0) {
             if (p.source == PackageSource::HOMEBREW && !p.url.empty()) {
                 size_futures.push_back(std::async(std::launch::async, [&p]() {
@@ -178,7 +154,7 @@ std::vector<Package> Resolver::resolve_all_concurrently(const std::vector<std::s
         f.get();
     }
 
-    return unique_to_install;
+    return final_install_list;
 }
 
 std::vector<std::string> Resolver::find_orphan_deps(const std::string& pkg_name) const {

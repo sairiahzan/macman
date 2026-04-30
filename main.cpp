@@ -17,6 +17,7 @@
 #include <csignal>
 #include <cstdlib>
 #include <unistd.h>
+#include <fcntl.h>
 #include <future>
 
 using namespace macman;
@@ -134,8 +135,12 @@ int main(int argc, char* argv[]) {
         if (!args.no_confirm) {
             // Confirmation happens inside install_multiple, which calls confirm_transaction
         } else {
-            // If noconfirm is set, we can redirect stdin early
-            freopen("/dev/null", "r", stdin);
+            // If noconfirm is set, redirect stdin early via dup2
+            int fd = open("/dev/null", O_RDONLY);
+            if (fd != -1) {
+                dup2(fd, STDIN_FILENO);
+                close(fd);
+            }
         }
 
         if (!tx.install_multiple(args.targets)) {

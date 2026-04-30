@@ -26,19 +26,27 @@ ProgressBar::ProgressBar(const std::string& label, size_t total_bytes)
 // --- Update Progress ---
 
 void ProgressBar::update(size_t current_bytes, double speed) {
+    update_no_render(current_bytes, speed);
+    render();
+}
+
+void ProgressBar::update_no_render(size_t current_bytes, double speed) {
     current_bytes_ = current_bytes;
     speed_ = speed;
     last_update_ = std::chrono::steady_clock::now();
-    render();
 }
 
 // --- Mark as Finished ---
 
 void ProgressBar::finish() {
-    current_bytes_ = total_bytes_;
-    complete_ = true;
+    finish_no_render();
     render();
     std::cout << std::endl; // Move to new line after completion
+}
+
+void ProgressBar::finish_no_render() {
+    current_bytes_ = total_bytes_;
+    complete_ = true;
 }
 
 // --- Get Terminal Width ---
@@ -201,22 +209,43 @@ int MultiProgress::add_bar(const std::string& label, size_t total) {
 void MultiProgress::update_bar(int id, size_t current, double speed) {
     std::lock_guard<std::mutex> lock(render_mutex_);
     if (id >= 0 && id < (int)bars_.size()) {
-        bars_[id].update(current, speed);
+        bars_[id].update_no_render(current, speed);
+        render_all_at_once();
     }
 }
 
 void MultiProgress::finish_bar(int id) {
     std::lock_guard<std::mutex> lock(render_mutex_);
     if (id >= 0 && id < (int)bars_.size()) {
-        bars_[id].finish();
+        bars_[id].finish_no_render();
+        render_all_at_once();
     }
 }
 
-void MultiProgress::render_all() {
-    std::lock_guard<std::mutex> lock(render_mutex_);
-    for (auto& bar : bars_) {
-        bar.render();
-        std::cout << std::endl;
+void MultiProgress::render_all_at_once() {
+    bool is_tty = isatty(STDOUT_FILENO);
+    
+    if (is_tty) {
+        if (!first_render_) {
+            std::cout << "\x1b[" << bars_.size() << "A";
+        }
+        first_render_ = false;
+
+        for (auto& bar : bars_) {
+            bar.render();
+            std::cout << std::endl;
+        }
+    } else {
+        // Fallback for non-TTY (like pipe or some sudo environments)
+        // Only render finished bars to avoid spamming the log
+        for (auto& bar : bars_) {
+            if (bar.is_complete()) {
+                // If it was already rendered once as complete, don't do it again
+                // (This would require a new state in ProgressBar, let's just render anyway for now)
+                bar.render();
+                std::cout << std::endl;
+            }
+        }
     }
 }
 

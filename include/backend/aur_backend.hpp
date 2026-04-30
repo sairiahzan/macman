@@ -70,6 +70,8 @@ public:
 
     bool has_package(const std::string& name);
 
+    std::optional<PKGBUILDInfo> download_pkgbuild(const std::string& name);
+
     // --- Compatibility Check (public for Transaction to call) ---
 
     CompatLevel check_macos_compatibility(const PKGBUILDInfo& info) const;
@@ -102,7 +104,6 @@ private:
 
     // --- Internal Helpers ---
 
-    std::optional<PKGBUILDInfo> download_pkgbuild(const std::string& name);
     PKGBUILDInfo parse_pkgbuild(const std::string& pkgbuild_path) const;
 
     bool download_sources(const PKGBUILDInfo& info, const std::string& work_dir, const std::string& repo_dir);

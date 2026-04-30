@@ -2,15 +2,23 @@
 // transaction.cpp [V1.2.0 Patch]
 
 #include "core/transaction.hpp"
+#include "core/config.hpp"
 #include "backend/homebrew_backend.hpp"
 #include "backend/aur_backend.hpp"
+#include "net/downloader.hpp"
 #include "macman.hpp"
 #include "cli/colors.hpp"
 #include <iostream>
 #include <iomanip>
+#include <fstream>
 #include <limits>
 #include <fcntl.h>
 #include <unistd.h>
+#include <filesystem>
+#include <thread>
+#include <future>
+
+namespace fs = std::filesystem;
 
 namespace macman {
 
@@ -62,14 +70,13 @@ bool Transaction::confirm_transaction(TransactionType type,
     bool confirmed = input.empty() || input == "Y" || input == "y" || input == "yes";
     
     if (confirmed) {
-        // Forcefully redirect stdin to /dev/null at the FD level
+        // Redirect stdin to /dev/null at the FD level to prevent
+        // child processes from consuming terminal input
         int fd = open("/dev/null", O_RDONLY);
         if (fd != -1) {
             dup2(fd, STDIN_FILENO);
             close(fd);
         }
-        // Also update the C-level stdin just in case
-        (void)freopen("/dev/null", "r", stdin);
     }
 
     return confirmed;
@@ -98,6 +105,51 @@ bool Transaction::install_multiple(const std::vector<std::string>& packages, Tra
     if (!confirm_transaction(type, unique_to_install, total_size)) {
         std::cout << "Transaction cancelled." << std::endl;
         return false;
+    }
+
+    // --- PARALLEL DOWNLOAD PHASE (After Confirmation) ---
+    std::vector<DownloadTask> download_tasks;
+    std::vector<Package> aur_packages;
+    std::string cache_dir = Config::instance().get_cache_dir();
+    
+    for (const auto& pkg : unique_to_install) {
+        if (pkg.source == PackageSource::LOCAL) continue;
+        if (pkg.source == PackageSource::HOMEBREW) {
+            if (pkg.url.empty()) continue;
+            std::string filename = pkg.name + "-" + pkg.version + ".tar.gz";
+            std::string full_path = cache_dir + "/" + filename;
+            if (!fs::exists(full_path) || fs::file_size(full_path) < 100) {
+                DownloadTask task;
+                task.label = pkg.name;
+                task.expected_size = pkg.download_size;
+                task.url = pkg.url;
+                task.output_path = full_path;
+                download_tasks.push_back(task);
+            }
+        } else if (pkg.source == PackageSource::AUR) {
+            aur_packages.push_back(pkg);
+        }
+    }
+
+    if (!download_tasks.empty() || !aur_packages.empty()) {
+        colors::print_action("Transaction: Fetching " + 
+                             std::to_string(download_tasks.size() + aur_packages.size()) + " items...");
+
+        std::vector<std::thread> aur_threads;
+        for (const auto& pkg : aur_packages) {
+            aur_threads.emplace_back([pkg]() {
+                AURBackend aur;
+                aur.download_pkgbuild(pkg.name);
+            });
+        }
+
+        if (!download_tasks.empty()) {
+            Downloader dl(8);
+            dl.download_all(download_tasks);
+        }
+
+        for (auto& t : aur_threads) t.join();
+        std::cout << std::endl;
     }
 
     bool all_success = true;

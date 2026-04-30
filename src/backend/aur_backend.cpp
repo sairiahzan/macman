@@ -28,7 +28,6 @@ namespace macman {
 AURBackend::AURBackend()
     : build_dir_(get_cache_dir() + "/builds"),
       healing_engine_(build_dir_) {
-    if (fs::exists(build_dir_)) fs::remove_all(build_dir_);
     fs::create_directories(build_dir_);
 }
 
@@ -101,9 +100,15 @@ Package AURBackend::aur_json_to_package(const nlohmann::json& result) const {
 std::optional<PKGBUILDInfo> AURBackend::download_pkgbuild(const std::string& name) {
     std::string repo_url = "https://aur.archlinux.org/" + name + ".git";
     std::string extract_dir = build_dir_ + "/" + name;
-    colors::print_substatus("Cloning AUR repository for " + name + "...");
+    
+    if (fs::exists(extract_dir + "/PKGBUILD")) {
+        return parse_pkgbuild(extract_dir + "/PKGBUILD");
+    }
+
+    colors::print_substatus("Cloning " + name + "...");
     if (fs::exists(extract_dir)) fs::remove_all(extract_dir);
-    if (run_exec("/usr/bin/git", {"clone", "--depth", "1", repo_url, extract_dir}, false) != 0) return std::nullopt;
+    // Suppress git output with > /dev/null
+    if (run_exec("/usr/bin/git", {"clone", "--depth", "1", "--quiet", repo_url, extract_dir}, false) != 0) return std::nullopt;
     return parse_pkgbuild(extract_dir + "/PKGBUILD");
 }
 
@@ -161,44 +166,26 @@ bool AURBackend::download_sources(const PKGBUILDInfo& info, const std::string& w
             filename = url.substr(url.rfind('/') + 1);
         }
 
-        // If it's a remote URL
         if (url.find("git+") == 0 || url.find("git://") == 0) {
             std::string real_url = url;
             if (url.find("git+") == 0) real_url = url.substr(4);
-            
             std::string target_dir = filename;
             if (target_dir.empty()) target_dir = info.pkgname;
 
-            colors::print_substatus("Cloning " + real_url + "...");
-            if (run_exec("/usr/bin/git", {"clone", "--depth", "1", real_url, target_dir}, false, work_dir) != 0) {
-                colors::print_error("Failed to clone " + real_url);
-                return false;
-            }
+            colors::print_substatus("Cloning " + target_dir + "...");
+            if (run_exec("/usr/bin/git", {"clone", "--depth", "1", "--quiet", real_url, target_dir}, false, work_dir) != 0) return false;
         } else if (url.find("://") != std::string::npos) {
-            colors::print_substatus("Downloading " + filename + "...");
-            if (run_exec("/usr/bin/curl", {"-L", "-s", "-o", filename, url}, false, work_dir) != 0) {
-                colors::print_error("Failed to download " + url);
-                return false;
-            }
+            colors::print_substatus("Fetching " + filename + "...");
+            if (run_exec("/usr/bin/curl", {"-L", "-s", "-o", filename, url}, false, work_dir) != 0) return false;
         } else {
-            // It's a local file in the AUR repository
-            colors::print_substatus("Copying " + url + "...");
             std::error_code ec;
             fs::copy(repo_dir + "/" + url, work_dir + "/" + filename, fs::copy_options::overwrite_existing, ec);
         }
 
-        // Extract if it's an archive
-        if (filename.find(".tar.gz") != std::string::npos || filename.find(".tgz") != std::string::npos) {
-            colors::print_substatus("Extracting " + filename + "...");
-            run_exec("/usr/bin/tar", {"-xzf", filename}, false, work_dir);
-        } else if (filename.find(".tar.xz") != std::string::npos) {
-            colors::print_substatus("Extracting " + filename + "...");
-            run_exec("/usr/bin/tar", {"-xJf", filename}, false, work_dir);
-        } else if (filename.find(".tar.bz2") != std::string::npos) {
-            colors::print_substatus("Extracting " + filename + "...");
-            run_exec("/usr/bin/tar", {"-xjf", filename}, false, work_dir);
+        // Extract silently
+        if (filename.find(".tar.") != std::string::npos || filename.find(".tgz") != std::string::npos) {
+            run_exec("/usr/bin/tar", {"-xf", filename}, false, work_dir);
         } else if (filename.find(".zip") != std::string::npos) {
-            colors::print_substatus("Extracting " + filename + "...");
             run_exec("/usr/bin/unzip", {"-q", filename}, false, work_dir);
         }
     }

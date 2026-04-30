@@ -254,47 +254,32 @@ bool Installer::install_package(const Package& pkg, const std::string& reason) {
     std::vector<std::string> stage_files;
     
     if (pkg.source == PackageSource::AUR) {
-        colors::print_status("Sources found in Arch Linux AUR. Compiling natively for macOS...");
-        // AURBackend normally deploys straight to prefix, we need to pass opt_dir as prefix
         AURBackend aur;
         std::string actual_version;
         build_success = aur.build_and_install(pkg.name, opt_dir, stage_files, actual_version);
         if (build_success) {
             if (!actual_version.empty() && actual_version != installed.version) {
-                colors::print_substatus("Dynamic version detected: " + actual_version);
                 installed.version = actual_version;
             }
             fix_macho_rpaths(opt_dir);
-            // Now link from opt to global prefix
             build_success = link_to_prefix(opt_dir, installed.installed_files);
         }
     } else {
-        colors::print_substatus("Found native macOS binary in Homebrew. Installing " + pkg.name + "...");
         // Brew Bottle branch
         if (pkg.url.empty()) {
-            colors::print_error("No download URL for " + pkg.name);
+            colors::print_error("No URL for " + pkg.name);
             return false;
         }
 
         std::string tarball_path = get_cache_dir() + "/" + pkg.name + "-" + pkg.version + ".tar.gz";
 
-        // Check if file exists AND is not empty (at least 100 bytes for a valid tarball)
-        bool cache_valid = false;
-        if (fs::exists(tarball_path)) {
-            if (fs::file_size(tarball_path) > 100) {
-                cache_valid = true;
-            } else {
-                fs::remove(tarball_path);
-            }
-        }
-
-        if (!cache_valid) {
+        if (!fs::exists(tarball_path) || fs::file_size(tarball_path) < 100) {
             Downloader dl;
             DownloadTask task;
-            task.url = pkg.url;
-            task.output_path = tarball_path;
             task.label = pkg.name;
             task.expected_size = pkg.download_size;
+            task.url = pkg.url;
+            task.output_path = tarball_path;
 
             auto result = dl.download(task);
             if (!result.success) {
@@ -303,24 +288,19 @@ bool Installer::install_package(const Package& pkg, const std::string& reason) {
             }
         }
         
-        // MITM Protection: SHA-256 verification
+        // Silent checksum
         if (!pkg.sha256.empty()) {
-            colors::print_substatus("Verifying SHA-256 for: " + pkg.name);
             if (!Checksum::verify_sha256(tarball_path, pkg.sha256)) {
+                colors::print_error("SHA-256 mismatch");
                 return false;
             }
-            colors::print_success("Checksum matched perfectly.");
         }
 
         HomebrewBackend brew;
-        // Deploy to Stage first (bottle contains full /usr/local structure)
         build_success = brew.install_bottle(tarball_path, stage_dir, stage_files);
         if (build_success) {
             fix_macho_rpaths(stage_dir);
-            
-            // Move from stage to opt_dir
             if (atomic_commit(stage_dir, opt_dir)) {
-                // Link from opt to global prefix
                 build_success = link_to_prefix(opt_dir, installed.installed_files);
             } else {
                 build_success = false;
@@ -674,7 +654,7 @@ bool Installer::analyze_and_fix_compile_errors(const std::string& log,
         for (const auto& hdr : missing) {
             auto it = hdr_fixes.find(hdr);
             if (it != hdr_fixes.end()) {
-                colors::print_substatus("Self-healing: remapping <" + hdr + "> → Darwin equivalent");
+// Silent fix
                 if (append_if_new(it->second)) any_fix = true;
             } else {
                 // Generic stub: covers linux/*, sys/epoll.h, sys/inotify.h, …
@@ -842,7 +822,7 @@ bool Installer::analyze_and_fix_compile_errors(const std::string& log,
             std::string lib = (*it)[1].str();
             if (!seen_libs.insert(lib).second) continue;
             if (noop_libs.count(lib)) {
-                colors::print_substatus("Self-healing: removing unsupported linker flag -l" + lib);
+// Silent fix
                 patch_build_flags(src_dir, "-l" + lib, "");
                 any_fix = true;
             }
@@ -1034,11 +1014,9 @@ bool Installer::build_with_healing(const std::string& base_cmd,
 
     for (int attempt = 0; attempt < max_retries; ++attempt) {
         if (attempt == 0) {
-            colors::print_substatus("Self-healing engine: compiling with macOS native toolchain...");
+            colors::print_substatus("Compiling " + src_dir.substr(src_dir.rfind('/') + 1) + "...");
         } else {
-            colors::print_substatus("Self-healing retry " + std::to_string(attempt) +
-                                    "/" + std::to_string(max_retries - 1) +
-                                    ": recompiling with applied fixes...");
+            colors::print_substatus("Healing... (Retry " + std::to_string(attempt) + ")");
         }
 
         // Re-compose the full command on every attempt so accumulated
