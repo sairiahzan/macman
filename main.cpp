@@ -12,7 +12,6 @@
 #include "core/transaction.hpp"
 #include "core/logger.hpp"
 #include "core/self_healing.hpp"
-#include "core/i18n.hpp"
 #include "backend/homebrew_backend.hpp"
 #include "backend/aur_backend.hpp"
 #include "net/http_client.hpp"
@@ -99,9 +98,6 @@ int main(int argc, char* argv[]) {
     // Initialize logger
     Logger::instance().init(Config::instance().get_log_file());
     Logger::instance().info("Macman session started");
-
-    // Initialize i18n
-    I18n::instance().set_language(Language::TR);
 
     // Parse arguments
     ArgumentParser parser;

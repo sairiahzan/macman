@@ -69,7 +69,6 @@ set(MACMAN_SOURCES
     src/core/process.cpp
     src/core/checksum.cpp
     src/core/logger.cpp
-    src/core/i18n.cpp
 
     # Network
     src/net/http_client.cpp
