@@ -31,6 +31,10 @@ Operation ArgumentParser::parse_sync_flags(const std::string& flags) const {
     if (flags.find('i') != std::string::npos) {
         return Operation::SYNC_INFO;
     }
+    // -Sc (clean)
+    if (flags.find('c') != std::string::npos) {
+        return Operation::SYNC_CLEAN;
+    }
     // -S (install)
     return Operation::SYNC_INSTALL;
 }
@@ -60,6 +64,18 @@ Operation ArgumentParser::parse_query_flags(const std::string& flags) const {
     // -Qo (file ownership)
     if (flags.find('o') != std::string::npos) {
         return Operation::QUERY_OWNS;
+    }
+    // -Qk (integrity check)
+    if (flags.find('k') != std::string::npos) {
+        return Operation::QUERY_CHECK;
+    }
+    // -Qu (upgradable)
+    if (flags.find('u') != std::string::npos) {
+        return Operation::SYNC_UPGRADABLE;
+    }
+    // -Qt (orphans)
+    if (flags.find('t') != std::string::npos) {
+        return Operation::QUERY_ORPHANS;
     }
     // -Q (list all)
     return Operation::QUERY_LIST;
@@ -91,6 +107,14 @@ ParsedArgs ArgumentParser::parse(int argc, char* argv[]) {
             args.operation = Operation::NUKE_ALL;
             continue;
         }
+        if (arg == "--doctor") {
+            args.operation = Operation::DOCTOR;
+            continue;
+        }
+        if (arg == "--tree") {
+            args.operation = Operation::DEPTREE;
+            continue;
+        }
         if (arg == "--noconfirm") {
             args.no_confirm = true;
             continue;
@@ -119,6 +143,9 @@ ParsedArgs ArgumentParser::parse(int argc, char* argv[]) {
                     break;
                 case 'Q':
                     args.operation = parse_query_flags(sub_flags);
+                    break;
+                case 'T':
+                    args.operation = Operation::DEPTREE;
                     break;
                 case 'h':
                     args.operation = Operation::HELP;
@@ -197,10 +224,13 @@ void ArgumentParser::print_help() {
               << " <pkg>     List files owned by a package" << std::endl;
     std::cout << "  " << colors::BOLD_CYAN << "-Qo" << colors::RESET 
               << " <file>    Find which package owns a file" << std::endl;
+    std::cout << "  " << colors::BOLD_CYAN << "-Qk" << colors::RESET 
+              << " <pkg>     Check package integrity" << std::endl;
 
     std::cout << std::endl;
     std::cout << colors::BOLD_WHITE << "Options:" << colors::RESET << std::endl;
     std::cout << "  --nuke            " << colors::BOLD_RED << "Remove ALL installed packages and caches completely" << colors::RESET << std::endl;
+    std::cout << "  --doctor          Run system health check" << std::endl;
     std::cout << "  --noconfirm       Skip confirmation prompts" << std::endl;
     std::cout << "  --verbose, -v     Enable verbose output" << std::endl;
     std::cout << "  --color=<when>    Color output (auto, always, never)" << std::endl;

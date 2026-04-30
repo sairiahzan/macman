@@ -86,7 +86,7 @@ bool Config::save(const std::string& path) const {
     
     // Ensure directory exists
     fs::path dir = fs::path(save_path).parent_path();
-    if (!fs::exists(dir)) {
+    if (!dir.empty() && !fs::exists(dir)) {
         fs::create_directories(dir);
     }
 
@@ -115,7 +115,7 @@ void Config::create_default(const std::string& path) const {
     std::string save_path = path.empty() ? macman::get_config_file() : path;
     
     fs::path dir = fs::path(save_path).parent_path();
-    if (!fs::exists(dir)) {
+    if (!dir.empty() && !fs::exists(dir)) {
         fs::create_directories(dir);
     }
 

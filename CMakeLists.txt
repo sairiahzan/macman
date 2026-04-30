@@ -29,6 +29,26 @@ include_directories(
     ${CURL_INCLUDE_DIRS}
 )
 
+# ── Testing ──────────────────────────────────────────────────────────────────
+enable_testing()
+include(FetchContent)
+
+FetchContent_Declare(
+    Catch2
+    GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+    GIT_TAG        v3.4.0
+)
+FetchContent_MakeAvailable(Catch2)
+
+# ── Code Formatting ─────────────────────────────────────────────────────────
+file(GLOB_RECURSE ALL_CXX_SOURCE_FILES
+    "src/*.cpp" "include/*.hpp" "main.cpp" "tests/*.cpp"
+)
+add_custom_target(format
+    COMMAND clang-format -i ${ALL_CXX_SOURCE_FILES}
+    COMMENT "Formatting code with clang-format..."
+)
+
 # ── Source Files ─────────────────────────────────────────────────────────────
 set(MACMAN_SOURCES
     # Entry point
@@ -48,6 +68,8 @@ set(MACMAN_SOURCES
     src/core/self_healing.cpp
     src/core/process.cpp
     src/core/checksum.cpp
+    src/core/logger.cpp
+    src/core/i18n.cpp
 
     # Network
     src/net/http_client.cpp
@@ -63,6 +85,21 @@ set(MACMAN_SOURCES
 
 # ── Build Executable ─────────────────────────────────────────────────────────
 add_executable(macman ${MACMAN_SOURCES})
+
+# ── Build Tests ──────────────────────────────────────────────────────────────
+set(TEST_SOURCES
+    tests/test_main.cpp
+    tests/test_checksum.cpp
+    tests/test_config.cpp
+    src/core/checksum.cpp
+    src/core/process.cpp
+    src/core/config.cpp
+    src/core/logger.cpp
+)
+add_executable(macman_tests ${TEST_SOURCES})
+target_link_libraries(macman_tests PRIVATE Catch2::Catch2WithMain)
+target_include_directories(macman_tests PRIVATE ${PROJECT_SOURCE_DIR}/include)
+add_test(NAME AllTests COMMAND macman_tests)
 
 # ── Link Libraries ──────────────────────────────────────────────────────────
 target_link_libraries(macman PRIVATE ${CURL_LIBRARIES})

@@ -33,6 +33,10 @@ public:
                                std::string& extra_ldflags,
                                const std::string& pkg_name = "");
 
+    // Performs system checks and prints a status report.
+    // Checks for: write permissions, required tools (git, curl, clang), SIP, etc.
+    bool run_doctor() const;
+
 private:
     std::string build_dir_;
 

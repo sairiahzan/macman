@@ -28,6 +28,10 @@ public:
 
     // Orphan tracking
     std::vector<std::string> find_orphan_deps(const std::string& pkg_name) const;
+    std::vector<std::string> list_orphans() const;
+
+    // Dependency visualization
+    void print_dependency_tree(const std::string& pkg_name, int depth = 0) const;
 
     // Parse dependency constraints natively (e.g. "sqlite>=3.4.0")
     std::string strip_constraint(const std::string& raw_dep) const;

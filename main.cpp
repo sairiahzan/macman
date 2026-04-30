@@ -10,6 +10,9 @@
 #include "core/config.hpp"
 #include "core/database.hpp"
 #include "core/transaction.hpp"
+#include "core/logger.hpp"
+#include "core/self_healing.hpp"
+#include "core/i18n.hpp"
 #include "backend/homebrew_backend.hpp"
 #include "backend/aur_backend.hpp"
 #include "net/http_client.hpp"
@@ -21,6 +24,7 @@
 #include <future>
 
 using namespace macman;
+namespace fs = std::filesystem;
 
 // --- Signal Handler (Ctrl+C Cleanup) ---
 
@@ -92,6 +96,13 @@ int main(int argc, char* argv[]) {
     // Load configuration
     Config::instance().load();
 
+    // Initialize logger
+    Logger::instance().init(Config::instance().get_log_file());
+    Logger::instance().info("Macman session started");
+
+    // Initialize i18n
+    I18n::instance().set_language(Language::TR);
+
     // Parse arguments
     ArgumentParser parser;
     ParsedArgs args = parser.parse(argc, argv);
@@ -101,11 +112,31 @@ int main(int argc, char* argv[]) {
     db.ensure_directories();
     db.load();
 
+    // Lock database for mutation operations
+    bool needs_lock = (args.operation == Operation::SYNC_INSTALL || 
+                       args.operation == Operation::SYNC_UPGRADE ||
+                       args.operation == Operation::SYNC_REFRESH ||
+                       args.operation == Operation::REMOVE ||
+                       args.operation == Operation::REMOVE_RECURSIVE ||
+                       args.operation == Operation::NUKE_ALL);
+    
+    if (needs_lock && !db.lock()) {
+        http_global_cleanup();
+        return 1;
+    }
+
     int exit_code = 0;
 
     // --- Route to Operation Handler ---
 
     switch (args.operation) {
+
+    // --- Doctor ---
+    case Operation::DOCTOR: {
+        SelfHealingEngine engine("");
+        if (!engine.run_doctor()) exit_code = 1;
+        break;
+    }
 
     // --- Version ---
     case Operation::VERSION:
@@ -238,6 +269,29 @@ int main(int argc, char* argv[]) {
         Transaction tx(db);
         tx.set_no_confirm(args.no_confirm);
         if (!tx.upgrade_all()) {
+            exit_code = 1;
+        }
+        break;
+    }
+
+    // --- Sync Upgradable (-Qu) ---
+    case Operation::SYNC_UPGRADABLE: {
+        Transaction tx(db);
+        if (!tx.list_upgradable()) {
+            exit_code = 1;
+        }
+        break;
+    }
+
+    // --- Sync Clean (-Sc) ---
+    case Operation::SYNC_CLEAN: {
+        if (geteuid() != 0) {
+            colors::print_error("you cannot perform this operation unless you are root.");
+            exit_code = 1;
+            break;
+        }
+        Transaction tx(db);
+        if (!tx.clean_cache()) {
             exit_code = 1;
         }
         break;
@@ -384,6 +438,68 @@ int main(int argc, char* argv[]) {
                 std::cout << filepath << " is owned by " 
                           << colors::BOLD_WHITE << owner << colors::RESET << std::endl;
             }
+        }
+        break;
+    }
+
+    // --- Query Check (-Qk <pkg>) ---
+    case Operation::QUERY_CHECK: {
+        if (args.targets.empty()) {
+            colors::print_error("no targets specified");
+            exit_code = 1;
+            break;
+        }
+        for (const auto& name : args.targets) {
+            auto pkg = db.get_package(name);
+            if (!pkg) {
+                colors::print_error("package '" + name + "' not found");
+                exit_code = 1;
+                continue;
+            }
+
+            colors::print_substatus("Checking integrity of " + name + "...");
+            int missing = 0;
+            for (const auto& f : pkg->installed_files) {
+                if (!fs::exists(f)) {
+                    std::cout << colors::BOLD_RED << "missing " << colors::RESET << f << std::endl;
+                    missing++;
+                }
+            }
+
+            if (missing == 0) {
+                colors::print_success(name + ": all " + std::to_string(pkg->installed_files.size()) + " files present");
+            } else {
+                colors::print_warning(name + ": " + std::to_string(missing) + " files missing!");
+                exit_code = 1;
+            }
+        }
+        break;
+    }
+
+    // --- Query Orphans (-Qt) ---
+    case Operation::QUERY_ORPHANS: {
+        Resolver res(db);
+        auto orphans = res.list_orphans();
+        if (orphans.empty()) {
+            std::cout << "No orphan packages found." << std::endl;
+        } else {
+            for (const auto& o : orphans) {
+                std::cout << colors::BOLD_WHITE << o << colors::RESET << std::endl;
+            }
+        }
+        break;
+    }
+
+    // --- Dependency Tree (-T) ---
+    case Operation::DEPTREE: {
+        if (args.targets.empty()) {
+            colors::print_error("no targets specified");
+            exit_code = 1;
+            break;
+        }
+        Resolver res(db);
+        for (const auto& name : args.targets) {
+            res.print_dependency_tree(name);
         }
         break;
     }

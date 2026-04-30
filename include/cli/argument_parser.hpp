@@ -20,12 +20,18 @@ enum class Operation {
     SYNC_INFO,          // -Si <pkg>    : Show package info
     SYNC_REFRESH,       // -Sy          : Refresh package database
     SYNC_UPGRADE,       // -Syu         : Full system upgrade
+    SYNC_UPGRADABLE,    // -Qu          : List upgradable packages
+    SYNC_CLEAN,         // -Sc          : Clean cache
     REMOVE,             // -R <pkg>     : Remove package
     REMOVE_RECURSIVE,   // -Rs <pkg>    : Remove with orphan deps
     QUERY_LIST,         // -Q           : List installed packages
     QUERY_INFO,         // -Qi <pkg>    : Info on installed package
     QUERY_FILES,        // -Ql <pkg>    : List files of package
     QUERY_OWNS,         // -Qo <file>   : Find which package owns file
+    QUERY_CHECK,        // -Qk <pkg>    : Check package integrity
+    QUERY_ORPHANS,      // -Qt          : List orphan packages
+    DEPTREE,            // -T / --tree  : Show dependency tree
+    DOCTOR,             // --doctor     : Run system health check
     NUKE_ALL,           // --nuke       : Remove all packages completely
     VERSION,            // --version    : Show version
     HELP                // -h / --help  : Show help

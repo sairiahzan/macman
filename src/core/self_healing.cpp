@@ -199,4 +199,60 @@ bool SelfHealingEngine::analyze_and_fix_build(const std::string& build_log,
 
 void SelfHealingEngine::patch_build_flags(const std::string& src_dir, const std::string& old_flag, const std::string& new_flag) const {}
 
+bool SelfHealingEngine::run_doctor() const {
+    colors::print_action("Macman Doctor: Running system health check...");
+    bool all_good = true;
+
+    auto check_tool = [&](const std::string& name, const std::string& path) {
+        if (fs::exists(path)) {
+            colors::print_success("[OK] Found " + name + " at " + path);
+            return true;
+        } else {
+            colors::print_warning("[!!] Missing " + name + " (Expected at " + path + ")");
+            return false;
+        }
+    };
+
+    // 1. Tool Checks
+    check_tool("git", "/usr/bin/git");
+    check_tool("curl", "/usr/bin/curl");
+    if (!check_tool("clang", "/usr/bin/clang")) all_good = false;
+    if (!check_tool("make", "/usr/bin/make")) all_good = false;
+
+    // 2. Permission Checks
+    std::string prefix = "/usr/local";
+    if (access(prefix.c_str(), W_OK) == 0) {
+        colors::print_success("[OK] Write access to " + prefix);
+    } else {
+        colors::print_warning("[!!] No write access to " + prefix + ". Sudo may be required.");
+    }
+
+    // 3. SIP Check (System Integrity Protection)
+    std::string sip_out;
+    if (run_exec("/usr/bin/csrutil", {"status"}, false) == 0) {
+        // Output is usually "System Integrity Protection status: enabled."
+        colors::print_success("[OK] SIP is enabled (Macman is SIP-friendly)");
+    }
+
+    // 4. PATH Check
+    char* path_env = getenv("PATH");
+    if (path_env) {
+        std::string path_str(path_env);
+        if (path_str.find("/usr/local/bin") != std::string::npos) {
+            colors::print_success("[OK] /usr/local/bin is in your PATH");
+        } else {
+            colors::print_warning("[!!] /usr/local/bin is NOT in your PATH. Add it to ~/.zshrc");
+            all_good = false;
+        }
+    }
+
+    if (all_good) {
+        colors::print_success("\nYour system is healthy and ready for Macman!");
+    } else {
+        colors::print_warning("\nDoctor found some issues. Please review the warnings above.");
+    }
+
+    return all_good;
+}
+
 } // namespace macman

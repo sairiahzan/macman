@@ -1,0 +1,74 @@
+.TH MACMAN 8 "April 2026" "v1.2.0" "Macman Manual"
+.SH NAME
+macman \- The Blazing-Fast, Self-Healing Package Manager for macOS
+.SH SYNOPSIS
+.B macman
+<operation> [options] [targets]
+.SH DESCRIPTION
+.B macman
+is a next-generation package manager for macOS written in C++17. It supports both Homebrew and AUR backends and features a self-healing build engine for AUR packages on Darwin.
+.SH OPERATIONS
+.TP
+.B \-S <pkg>
+Install a package.
+.TP
+.B \-Ss <query>
+Search for packages.
+.TP
+.B \-Sy
+Refresh package databases.
+.TP
+.B \-Syu
+Perform a full system upgrade.
+.TP
+.B \-Qu
+List upgradable packages.
+.TP
+.B \-Sc
+Clean the package cache and build files.
+.TP
+.B \-R <pkg>
+Remove a package.
+.TP
+.B \-Rs <pkg>
+Remove a package and its orphan dependencies.
+.TP
+.B \-Q
+List all installed packages.
+.TP
+.B \-Qi <pkg>
+Show detailed information about an installed package.
+.TP
+.B \-Qk <pkg>
+Check the integrity of an installed package.
+.TP
+.B \-Qt
+List packages installed as dependencies but no longer needed.
+.TP
+.B \-T
+Display the dependency tree of a package.
+.SH OPTIONS
+.TP
+.B \-\-doctor
+Run system health checks to identify common issues.
+.TP
+.B \-\-nuke
+Danger: Completely remove all packages and clean all caches.
+.TP
+.B \-\-noconfirm
+Skip all user confirmation prompts.
+.TP
+.B \-\-verbose
+Enable detailed logging and output.
+.SH FILES
+.TP
+.I /usr/local/etc/macman.conf
+System-wide configuration file.
+.TP
+.I /usr/local/var/macman/local.db
+The local package database.
+.TP
+.I /usr/local/var/log/macman/macman.log
+The system log file.
+.SH AUTHOR
+Arda Yigit - Hazani <https://github.com/sairiahzan>

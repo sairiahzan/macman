@@ -51,9 +51,15 @@ public:
     size_t package_count() const;
     size_t total_installed_size() const;
 
+    // --- Database Lock ---
+
+    bool lock();
+    void unlock();
+
 private:
     std::string db_path_;
     std::map<std::string, Package> packages_;
+    int lock_fd_ = -1;
 };
 
 } // namespace macman

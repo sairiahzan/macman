@@ -1,0 +1,44 @@
+#compdef macman
+
+_macman_installed_packages() {
+    _wanted packages expl 'installed packages' compadd $(macman -Q | awk '{print $1}')
+}
+
+_macman() {
+    local -a ops opts
+    
+    ops=(
+        '-S:Install packages'
+        '-Ss:Search for packages'
+        '-Si:Display package information'
+        '-Sy:Refresh package databases'
+        '-Syu:Full system upgrade'
+        '-Qu:List upgradable packages'
+        '-Sc:Clean cache'
+        '-R:Remove packages'
+        '-Rs:Remove packages and orphans'
+        '-Q:List installed packages'
+        '-Qi:Show package info'
+        '-Ql:List files owned by package'
+        '-Qo:Find package owning file'
+        '-Qk:Check package integrity'
+        '-Qt:List orphan packages'
+        '-T:Show dependency tree'
+    )
+
+    opts=(
+        '--doctor:Run system health check'
+        '--nuke:Remove all packages and caches'
+        '--noconfirm:Skip confirmation prompts'
+        '--verbose:Enable verbose output'
+        '--version:Show version'
+        '--help:Show help'
+    )
+
+    _arguments -s \
+        "${ops[@]}" \
+        "${opts[@]}" \
+        '*:package:_macman_installed_packages'
+}
+
+_macman "$@"

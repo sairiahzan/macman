@@ -11,6 +11,9 @@
 #include <filesystem>
 #include <algorithm>
 #include <iostream>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/file.h>
 
 namespace fs = std::filesystem;
 
@@ -224,6 +227,43 @@ size_t Database::total_installed_size() const {
         total += pkg.installed_size;
     }
     return total;
+}
+
+// --- Database Lock ---
+
+bool Database::lock() {
+    std::string lock_path = "/usr/local/var/run/macman.lock";
+    
+    // Ensure run directory exists
+    try {
+        fs::create_directories("/usr/local/var/run");
+    } catch (...) {
+        // Fallback to /tmp if no permission for /usr/local/var/run
+        lock_path = "/tmp/macman.lock";
+    }
+
+    lock_fd_ = open(lock_path.c_str(), O_RDWR | O_CREAT, 0644);
+    if (lock_fd_ == -1) {
+        colors::print_error("Cannot create lock file: " + lock_path);
+        return false;
+    }
+
+    if (flock(lock_fd_, LOCK_EX | LOCK_NB) == -1) {
+        colors::print_error("Macman is already running in another process.");
+        close(lock_fd_);
+        lock_fd_ = -1;
+        return false;
+    }
+
+    return true;
+}
+
+void Database::unlock() {
+    if (lock_fd_ != -1) {
+        flock(lock_fd_, LOCK_UN);
+        close(lock_fd_);
+        lock_fd_ = -1;
+    }
 }
 
 } // namespace macman

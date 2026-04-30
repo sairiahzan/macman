@@ -187,4 +187,49 @@ std::vector<std::string> Resolver::find_orphan_deps(const std::string& pkg_name)
     return orphans;
 }
 
+std::vector<std::string> Resolver::list_orphans() const {
+    std::vector<std::string> orphans;
+    auto all = db_.get_all_packages();
+    
+    for (const auto& pkg : all) {
+        if (pkg.install_reason != "dependency") continue;
+
+        bool is_needed = false;
+        for (const auto& other : all) {
+            if (other.name == pkg.name) continue;
+            for (const auto& dep : other.dependencies) {
+                if (strip_constraint(dep) == pkg.name) {
+                    is_needed = true;
+                    break;
+                }
+            }
+            if (is_needed) break;
+        }
+
+        if (!is_needed) {
+            orphans.push_back(pkg.name);
+        }
+    }
+    return orphans;
+}
+
+void Resolver::print_dependency_tree(const std::string& pkg_name, int depth) const {
+    auto pkg = db_.get_package(pkg_name);
+    if (!pkg) {
+        // If not installed, try to resolve it from remotes (read-only check)
+        // For simplicity, we only show installed tree for now
+        return;
+    }
+
+    for (int i = 0; i < depth; i++) std::cout << "  ";
+    if (depth > 0) std::cout << "└─";
+    
+    std::cout << colors::BOLD_WHITE << pkg->name << colors::RESET 
+              << " " << colors::DIM << pkg->version << colors::RESET << std::endl;
+
+    for (const auto& dep : pkg->dependencies) {
+        print_dependency_tree(strip_constraint(dep), depth + 1);
+    }
+}
+
 } // namespace macman

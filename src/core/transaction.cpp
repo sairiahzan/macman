@@ -299,4 +299,67 @@ bool Transaction::upgrade_all() {
     return install_multiple(targets_to_upgrade, TransactionType::UPGRADE);
 }
 
+bool Transaction::clean_cache() {
+    std::string cache_dir = Config::instance().get_cache_dir();
+    std::string build_dir = cache_dir + "/builds";
+    
+    colors::print_action("Cleaning cache and build files...");
+    
+    size_t removed_count = 0;
+    try {
+        if (fs::exists(cache_dir)) {
+            for (const auto& entry : fs::directory_iterator(cache_dir)) {
+                if (entry.is_regular_file()) {
+                    fs::remove(entry.path());
+                    removed_count++;
+                }
+            }
+        }
+        if (fs::exists(build_dir)) {
+            fs::remove_all(build_dir);
+            fs::create_directories(build_dir);
+        }
+        colors::print_success("Cache cleaned successfully (" + std::to_string(removed_count) + " files removed)");
+        return true;
+    } catch (const std::exception& e) {
+        colors::print_error("Failed to clean cache: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool Transaction::list_upgradable() {
+    auto installed = db_.get_all_packages();
+    if (installed.empty()) return true;
+
+    colors::print_status("Checking for available updates...");
+    
+    std::vector<std::future<std::optional<std::string>>> futures;
+    for (const auto& pkg : installed) {
+        futures.push_back(std::async(std::launch::async, [this, pkg]() {
+            Package latest = resolver_.resolve_package(pkg.name);
+            if (!latest.version.empty() && Package::compare_versions(latest.version, pkg.version) > 0) {
+                return std::make_optional(pkg.name + " " + pkg.version + " -> " + latest.version);
+            }
+            return std::optional<std::string>(std::nullopt);
+        }));
+    }
+
+    int count = 0;
+    for (auto& f : futures) {
+        auto res = f.get();
+        if (res) {
+            std::cout << colors::BOLD_WHITE << *res << colors::RESET << std::endl;
+            count++;
+        }
+    }
+
+    if (count == 0) {
+        std::cout << "Your system is up to date." << std::endl;
+    } else {
+        std::cout << std::endl << "Found " << count << " upgradable packages." << std::endl;
+    }
+    
+    return true;
+}
+
 } // namespace macman

@@ -37,6 +37,9 @@ public:
     bool upgrade_all();
     bool refresh_databases();
 
+    bool clean_cache();
+    bool list_upgradable();
+
     void set_no_confirm(bool val) { no_confirm_ = val; }
 
 private:
