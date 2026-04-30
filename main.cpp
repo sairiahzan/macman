@@ -11,6 +11,7 @@
 #include "core/database.hpp"
 #include "core/transaction.hpp"
 #include "core/logger.hpp"
+#include "core/checksum.hpp"
 #include "core/self_healing.hpp"
 #include "backend/homebrew_backend.hpp"
 #include "backend/aur_backend.hpp"
@@ -21,6 +22,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <future>
+#include <set>
+#include <iomanip>
 
 using namespace macman;
 namespace fs = std::filesystem;
@@ -106,7 +109,11 @@ int main(int argc, char* argv[]) {
     // Load local database
     Database db;
     db.ensure_directories();
-    db.load();
+    if (!db.load()) {
+        colors::print_error("Failed to load local database.");
+        http_global_cleanup();
+        return 1;
+    }
 
     // Lock database for mutation operations
     bool needs_lock = (args.operation == Operation::SYNC_INSTALL || 
@@ -455,17 +462,47 @@ int main(int argc, char* argv[]) {
 
             colors::print_substatus("Checking integrity of " + name + "...");
             int missing = 0;
+            int mismatched = 0;
+            std::set<std::string> checked_files;
+
+            // 1. Check existence of files and symlinks
             for (const auto& f : pkg->installed_files) {
-                if (!fs::exists(f)) {
-                    std::cout << colors::BOLD_RED << "missing " << colors::RESET << f << std::endl;
+                // Use symlink_status to see if the symlink itself exists even if it's broken
+                if (!fs::exists(fs::symlink_status(f))) {
+                    std::cout << colors::BOLD_RED << "missing  " << colors::RESET << f << std::endl;
                     missing++;
+                }
+                checked_files.insert(f);
+            }
+
+            // 2. Deep verification: Check hashes of real files in /opt
+            if (!pkg->file_hashes.empty()) {
+                for (const auto& [path, expected_hash] : pkg->file_hashes) {
+                    if (!fs::exists(path)) {
+                        if (checked_files.find(path) == checked_files.end()) {
+                            std::cout << colors::BOLD_RED << "missing  " << colors::RESET << path << std::endl;
+                            missing++;
+                        }
+                        continue;
+                    }
+                    
+                    std::string actual_hash = Checksum::compute_sha256(path);
+                    if (actual_hash != expected_hash) {
+                        std::cout << colors::BOLD_RED << "mismatch " << colors::RESET << path << std::endl;
+                        mismatched++;
+                    }
+                    checked_files.insert(path);
                 }
             }
 
-            if (missing == 0) {
-                colors::print_success(name + ": all " + std::to_string(pkg->installed_files.size()) + " files present");
+            if (missing == 0 && mismatched == 0) {
+                colors::print_success(name + ": all " + std::to_string(checked_files.size()) + " files present and verified");
             } else {
-                colors::print_warning(name + ": " + std::to_string(missing) + " files missing!");
+                std::string msg = name + ": ";
+                if (missing > 0) msg += std::to_string(missing) + " files missing";
+                if (missing > 0 && mismatched > 0) msg += ", ";
+                if (mismatched > 0) msg += std::to_string(mismatched) + " files altered";
+                colors::print_warning(msg + "!");
                 exit_code = 1;
             }
         }

@@ -53,6 +53,7 @@ struct Package {
     std::vector<std::string> dependencies;  // Runtime dependencies
     std::vector<std::string> build_deps;    // Build-time dependencies
     std::vector<std::string> installed_files; // Files owned by this package
+    std::map<std::string, std::string> file_hashes; // file_path -> sha256
     
     std::string install_date;               // ISO 8601 install timestamp
     std::string install_reason;             // "explicit" or "dependency"

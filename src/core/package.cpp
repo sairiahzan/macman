@@ -80,6 +80,7 @@ nlohmann::json Package::to_json() const {
         {"dependencies",    dependencies},
         {"build_deps",      build_deps},
         {"installed_files", installed_files},
+        {"file_hashes",     file_hashes},
         {"install_date",    install_date},
         {"install_reason",  install_reason}
     };
@@ -111,6 +112,9 @@ Package Package::from_json(const nlohmann::json& j) {
     }
     if (j.contains("installed_files") && j["installed_files"].is_array()) {
         pkg.installed_files = j["installed_files"].get<std::vector<std::string>>();
+    }
+    if (j.contains("file_hashes") && j["file_hashes"].is_object()) {
+        pkg.file_hashes = j["file_hashes"].get<std::map<std::string, std::string>>();
     }
 
     return pkg;

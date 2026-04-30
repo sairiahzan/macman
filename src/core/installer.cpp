@@ -226,6 +226,20 @@ bool Installer::link_to_prefix(const std::string& pkg_dir, std::vector<std::stri
     }
 }
 
+void Installer::record_hashes(const std::string& pkg_dir, std::map<std::string, std::string>& hashes) const {
+    try {
+        for (auto const& entry : fs::recursive_directory_iterator(pkg_dir)) {
+            if (entry.is_regular_file()) {
+                std::string path = entry.path().string();
+                std::string hash = Checksum::compute_sha256(path);
+                if (!hash.empty()) {
+                    hashes[path] = hash;
+                }
+            }
+        }
+    } catch (...) {}
+}
+
 bool Installer::install_package(const Package& pkg, const std::string& reason) {
     if (pkg.version == "macOS-system-stub") {
         colors::print_substatus("Using macOS system provider for " + pkg.name);
@@ -262,6 +276,8 @@ bool Installer::install_package(const Package& pkg, const std::string& reason) {
                 installed.version = actual_version;
             }
             fix_macho_rpaths(opt_dir);
+            colors::print_substatus("Calculating file hashes for verification...");
+            record_hashes(opt_dir, installed.file_hashes);
             build_success = link_to_prefix(opt_dir, installed.installed_files);
         }
     } else {
@@ -301,6 +317,8 @@ bool Installer::install_package(const Package& pkg, const std::string& reason) {
         if (build_success) {
             fix_macho_rpaths(stage_dir);
             if (atomic_commit(stage_dir, opt_dir)) {
+                colors::print_substatus("Calculating file hashes for verification...");
+                record_hashes(opt_dir, installed.file_hashes);
                 build_success = link_to_prefix(opt_dir, installed.installed_files);
             } else {
                 build_success = false;
@@ -315,7 +333,11 @@ bool Installer::install_package(const Package& pkg, const std::string& reason) {
         // Record both the symlinks AND the opt directory itself
         // This ensures the entire opt folder is removed on uninstall or rollback
         installed.installed_files.push_back(opt_dir);
-        db_.add_package(installed);
+        if (!db_.add_package(installed)) {
+            colors::print_error("Failed to record package in database: " + pkg.name);
+            // Optional: cleanup opt_dir? For now just return false.
+            return false;
+        }
         return true;
     } else {
         // Cleanup if installation failed or was aborted

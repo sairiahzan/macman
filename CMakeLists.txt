@@ -90,18 +90,32 @@ set(TEST_SOURCES
     tests/test_main.cpp
     tests/test_checksum.cpp
     tests/test_config.cpp
+    tests/test_database.cpp
+    tests/test_resolver.cpp
     src/core/checksum.cpp
     src/core/process.cpp
     src/core/config.cpp
     src/core/logger.cpp
+    src/core/database.cpp
+    src/core/resolver.cpp
+    src/core/package.cpp
+    src/backend/homebrew_backend.cpp
+    src/net/http_client.cpp
 )
-add_executable(macman_tests ${TEST_SOURCES})
-target_link_libraries(macman_tests PRIVATE Catch2::Catch2WithMain)
+add_executable(macman_tests ${TEST_SOURCES}
+    src/backend/aur_backend.cpp
+    src/ui/progress_bar.cpp
+    src/core/self_healing.cpp
+)
+target_link_libraries(macman_tests PRIVATE Catch2::Catch2WithMain ${CURL_LIBRARIES} sqlite3)
+if(APPLE)
+    target_link_libraries(macman_tests PRIVATE "-framework Security" "-framework SystemConfiguration")
+endif()
 target_include_directories(macman_tests PRIVATE ${PROJECT_SOURCE_DIR}/include)
 add_test(NAME AllTests COMMAND macman_tests)
 
 # ── Link Libraries ──────────────────────────────────────────────────────────
-target_link_libraries(macman PRIVATE ${CURL_LIBRARIES})
+target_link_libraries(macman PRIVATE ${CURL_LIBRARIES} sqlite3)
 
 # ── macOS Frameworks ─────────────────────────────────────────────────────────
 if(APPLE)
