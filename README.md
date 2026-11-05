@@ -1,38 +1,35 @@
 # Macman
 
-Macman is a C++17 package manager for macOS with a command-line interface inspired by Arch Linux's `pacman`. It can resolve packages from Homebrew and build source packages from the Arch User Repository (AUR) on macOS.
+Macman is a C++17 package manager for macOS inspired by Arch Linux's `pacman` command-line workflow. It brings together access to Homebrew packages and the ability to build AUR source packages natively on macOS.
 
-AUR packages are built from source on the host; Macman does not run Linux binaries through a compatibility layer. Its Self-Healing Engine (SHE) captures build output, recognizes a limited set of known build failures, applies targeted fixes, and retries. It can help with Darwin-specific build issues, but it does not make every AUR package compatible with macOS.
+One of Macman's distinctive features is its **Self-Healing Engine (SHE)**. SHE captures build output, looks for known Darwin compatibility issues, applies targeted fixes, and retries the build. This can make adapting some Linux-oriented source packages to macOS easier. `extundelete` and `ext4magic` are examples of AUR packages that have been built from source and run natively on macOS.
 
 ## Features
 
-- Search and resolve packages from Homebrew and the AUR
-- Install Homebrew bottles and build AUR packages from source
-- Resolve package dependencies and track installed packages in a SQLite database
-- Remove packages, find orphan dependencies, and inspect package-owned files
-- Verify installed-file integrity with recorded SHA-256 hashes
-- Recover from some known build issues using SHE
-- Pacman-inspired commands, with a zsh completion script and a man page
+- Search Homebrew and AUR packages and view package information
+- Install Homebrew bottles and build AUR source packages on macOS
+- Use SHE to attempt fixes for known build and Darwin compatibility issues
+- Resolve dependencies and roll back packages installed in a transaction when an installation fails
+- Track packages in a local SQLite database
+- Inspect installed packages, their files, and their dependencies
+- Check installed-file integrity using SHA-256 hashes
+- Pacman-inspired commands, zsh completion, and a man page
 
-## Requirements
+## Installation
 
-- macOS
-- Xcode Command Line Tools (including `clang`)
-- CMake 3.16 or newer
-- Git and curl
-- Network access to fetch package metadata and sources
+The installer builds Macman on your machine and places the executable at `/usr/local/bin/macman`. Macman's configuration, database, and cache are stored under `~/.macman`.
 
-Building the test target also uses CMake `FetchContent` to download Catch2, so the first configure/build needs network access.
-
-## Install
-
-The installer builds Macman from source and installs its executable to `/usr/local/bin/macman`. It creates Macman's data directories under `~/.macman`; package operations that modify the system require `sudo`.
+Requirements: macOS, Xcode Command Line Tools (`clang`), CMake 3.16 or later, Git, curl, and an internet connection. CMake must already be installed.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sairiahzan/macman/main/install.sh | bash
 ```
 
-The installer requires CMake to already be available. If it is not installed, install it first (for example, with Homebrew). After installation, restart your terminal or reload your shell configuration.
+After installation, restart your terminal or reload your zsh configuration:
+
+```bash
+source ~/.zshrc
+```
 
 ## Build from source
 
@@ -43,17 +40,19 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(sysctl -n hw.ncpu)"
 ```
 
-Run the locally built program:
+Show the help screen:
 
 ```bash
 ./build/macman --help
 ```
 
-Run the test suite:
+Run the tests:
 
 ```bash
 ctest --test-dir build --output-on-failure
 ```
+
+The test target downloads Catch2 through CMake `FetchContent`, so an internet connection is needed during the initial configuration.
 
 ## Commands
 
@@ -61,57 +60,53 @@ ctest --test-dir build --output-on-failure
 | --- | --- |
 | `macman -Ss <query>` | Search Homebrew and AUR |
 | `macman -Si <package>` | Show remote package information |
-| `sudo macman -S <package>` | Install a package and resolve dependencies |
+| `sudo macman -S <package>` | Install a package and resolve its dependencies |
 | `macman -Sy` | Refresh package databases |
 | `sudo macman -Syu` | Refresh databases and upgrade installed packages |
-| `macman -Qu` | List available upgrades |
+| `macman -Qu` | List packages with available upgrades |
 | `macman -Q` | List installed packages |
-| `macman -Qi <package>` | Show local package information |
-| `macman -Ql <package>` | List files owned by an installed package |
-| `macman -Qo <file>` | Show which installed package owns a file |
-| `macman -Qk <package>` | Check installed-file integrity |
-| `macman -Qt` | List orphan dependencies |
+| `macman -Qi <package>` | Show information about an installed package |
+| `macman -Ql <package>` | List files installed by a package |
+| `macman -Qo <file>` | Show which package owns a file |
+| `macman -Qk <package>` | Check package file integrity |
+| `macman -Qt` | List orphaned dependencies |
 | `macman -T <package>` | Show the installed dependency tree |
 | `sudo macman -R <package>` | Remove a package |
-| `sudo macman -Rs <package>` | Remove a package and orphan dependencies |
-| `sudo macman -Sc` | Clean cached downloads and build files |
-| `sudo macman --nuke` | Remove all Macman-managed packages and clean the cache |
-| `macman --doctor` | Check selected tools and system configuration |
+| `sudo macman -Rs <package>` | Remove a package and its orphaned dependencies |
+| `sudo macman -Sc` | Clean the cache and build files |
+| `sudo macman --nuke` | Remove Macman-managed packages and clean the cache |
+| `macman --doctor` | Check selected tools and system settings |
 
-Use `macman --help` for the complete option list. Review commands carefully before running them, especially `--nuke`.
+Use `macman --help` to see all available options. Review system-changing commands carefully, especially `--nuke`.
 
-## AUR builds and SHE
+## AUR builds and the Self-Healing Engine
 
-For AUR packages, Macman obtains the package recipe and source, then invokes its build/package steps on macOS. SHE analyzes captured build output and can apply a limited set of known workarounds, such as adding selected compiler flags, addressing certain gettext linking issues, or using GNU coreutils where macOS tools lack expected options. It retries the build after a fix when applicable.
+For AUR packages, Macman obtains the package recipe and source code, then runs the build and packaging steps on macOS. SHE examines build logs and attempts targeted workarounds for known issues. Examples implemented in the project include adding selected compiler flags, addressing some gettext linking problems, and using GNU coreutils when macOS tools do not support expected options.
 
-The project maintainer reports successful native macOS builds of `extundelete` and `ext4magic` from AUR source. These are examples, not a guarantee that arbitrary AUR packages will build or work on macOS. Compatibility depends on each package's source, dependencies, and assumptions about Linux APIs and tools. SHE is not a sandbox or Linux compatibility layer.
+This approach builds from source for macOS rather than running Linux binaries. `extundelete` and `ext4magic` are examples that have been successfully built and run natively. Package results depend on their source code, dependencies, and assumptions about Linux; SHE continues to evolve as more compatibility issues are addressed.
 
-**Security note:** AUR build recipes are executable shell scripts. Only build packages whose source and recipe you trust. Builds are not isolated in a container.
+AUR build recipes are executable scripts. Only build packages whose source and recipe you trust. Builds are not currently run inside a container or sandbox.
 
-## Data locations
-
-Macman's runtime configuration and package data are rooted at `~/.macman` (for example, the local database is under `~/.macman/var`). The installer places the executable at `/usr/local/bin/macman`. System-level install/remove operations require elevated permissions.
-
-## Project layout
+## Project structure
 
 ```text
-include/       C++ headers grouped by subsystem
+include/       C++ headers organized by subsystem
 src/
   backend/     Homebrew and AUR integrations
-  cli/         Argument parsing
-  core/        Database, resolver, transactions, installer, and package logic
+  cli/         Command-line argument parsing
+  core/        Packages, database, resolution, installation, and transactions
   net/         HTTP client and downloads
   ui/          Progress display
 tests/         Catch2 unit tests
-scripts/       Shell completion
+scripts/       zsh completion
 man/           macman(8) manual
-third_party/   Bundled nlohmann/json header
+third_party/   nlohmann/json header
 ```
 
 ## Contributing
 
-Issues and pull requests are welcome. Compatibility improvements and tests for package installation, rollback, and platform-specific build behavior are especially useful.
+Contributions are welcome! New Darwin compatibility fixes, documented AUR build successes, and tests for package installation and rollback are especially valuable. Open an issue or pull request on GitHub to report a problem or contribute a change.
 
 ## License
 
-Macman is licensed under the GNU General Public License v3.0. See [LICENSE](LICENSE).
+Macman is licensed under the GNU General Public License v3.0 (GPL-3.0). See [LICENSE](LICENSE) for details.
